@@ -8,9 +8,75 @@
 #include <common/text.h>
 #include "state.h"
 #include "graph.h"
+#include <interpret_arithmetic/export.h>
 
 namespace chp
 {
+
+term_index::term_index()
+{
+	term = -1;
+}
+
+term_index::term_index(int index) : petri::term_index(index)
+{
+	term = -1;
+}
+
+term_index::term_index(int index, int term) : petri::term_index(index)
+{
+	this->term = term;
+}
+
+term_index::~term_index()
+{
+
+}
+
+void term_index::hash(hasher &hash) const
+{
+	hash.put(&index);
+	hash.put(&term);
+}
+
+string term_index::to_string(const graph &g, const ucs::variable_set &v)
+{
+	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + export_composition(g.transitions[index].local_action.cubes[term], v).to_string();
+}
+
+bool operator<(term_index i, term_index j)
+{
+	return (i.index < j.index) ||
+		   (i.index == j.index && i.term < j.term);
+}
+
+bool operator>(term_index i, term_index j)
+{
+	return (i.index > j.index) ||
+		   (i.index == j.index && i.term > j.term);
+}
+
+bool operator<=(term_index i, term_index j)
+{
+	return (i.index < j.index) ||
+		   (i.index == j.index && i.term <= j.term);
+}
+
+bool operator>=(term_index i, term_index j)
+{
+	return (i.index > j.index) ||
+		   (i.index == j.index && i.term >= j.term);
+}
+
+bool operator==(term_index i, term_index j)
+{
+	return (i.index == j.index && i.term == j.term);
+}
+
+bool operator!=(term_index i, term_index j)
+{
+	return (i.index != j.index || i.term != j.term);
+}
 
 enabled_transition::enabled_transition()
 {
@@ -79,6 +145,12 @@ local_token::local_token(int index)
 	guard = arithmetic::operand(1);
 }
 
+local_token::local_token(token t)
+{
+	this->index = t.index;
+	guard = arithmetic::operand(1);
+}
+
 local_token::local_token(int index, arithmetic::expression guard, vector<enabled_transition> prev)
 {
 	this->index = index;
@@ -100,10 +172,16 @@ state::state()
 {
 }
 
-state::state(vector<token> tokens, vector<vector<int> > encodings)
+state::state(vector<token> tokens, vector<arithmetic::value> encodings)
 {
 	this->tokens = tokens;
 	this->encodings = encodings;
+}
+
+state::state(vector<local_token> tokens, vector<arithmetic::value> encoding)
+{
+	this->tokens = tokens;
+	this->encodings = encoding;
 }
 
 state::~state()
@@ -116,7 +194,7 @@ void state::hash(hasher &hash) const
 	hash.put(&tokens);
 }
 
-state state::merge(int composition, const state &s0, const state &s1)
+state state::merge(const state &s0, const state &s1)
 {
 	state result;
 
@@ -124,39 +202,23 @@ state state::merge(int composition, const state &s0, const state &s1)
 	::merge(s0.tokens.begin(), s0.tokens.end(), s1.tokens.begin(), s1.tokens.end(), result.tokens.begin());
 	result.tokens.resize(unique(result.tokens.begin(), result.tokens.end()) - result.tokens.begin());
 
-	if (composition == petri::parallel)
+	int m = min(s0.encodings.size(), s1.encodings.size());
+	for (int k = 0; k < m; k++)
 	{
-		for (int i = 0; i < (int)s0.encodings.size(); i++)
-			for (int j = 0; j < (int)s1.encodings.size(); j++)
-			{
-				vector<int> add;
-				int m = min(s0.encodings[i].size(), s1.encodings[j].size());
-				for (int k = 0; k < m; k++)
-				{
-					if (s0.encodings[i][k] == 0)
-						add.push_back(s1.encodings[j][k]);
-					else
-						add.push_back(s0.encodings[i][k]);
-				}
-
-				result.encodings.push_back(add);
-			}
-
-	}
-	else if (composition == petri::choice)
-	{
-		result.encodings.insert(result.encodings.end(), s0.encodings.begin(), s0.encodings.end());
-		result.encodings.insert(result.encodings.end(), s1.encodings.begin(), s1.encodings.end());
+		if (s0.encodings[k].data != s1.encodings[k])
+			result.encodings.push_back(arithmetic::value::unknown);
+		else
+			result.encodings.push_back(s0.encodings[k]);
 	}
 
 	return result;
 }
 
-state state::collapse(int composition, int index, const state &s)
+state state::collapse(int index, const state &s)
 {
 	state result;
 
-	result.tokens.push_back(token(index));
+	result.tokens.push_back(petri::token(index));
 
 	result.encodings = s.encodings;
 
@@ -171,7 +233,7 @@ state state::convert(map<petri::iterator, petri::iterator> translate) const
 	{
 		map<petri::iterator, petri::iterator>::iterator loc = translate.find(petri::iterator(place::type, tokens[i].index));
 		if (loc != translate.end())
-			result.tokens.push_back(token(loc->second.index));
+			result.tokens.push_back(petri::token(loc->second.index));
 	}
 
 	result.encodings = encodings;
@@ -192,14 +254,9 @@ string state::to_string(const ucs::variable_set &variables)
 
 	for (int i = 0; i < (int)encodings.size(); i++)
 	{
-		result += "[";
-		for (int j = 0; j < (int)encodings[i].size(); j++)
-		{
-			if (j != 0)
-				result += ", ";
-			result += variables.nodes[j].to_string() + "=" + ::to_string(encodings[i][j]);
-		}
-		result += "] ";
+		if (i != 0)
+			result += ", ";
+		result += variables.nodes[i].to_string() + "=" + ::to_string(encodings[i]);
 	}
 
 	return result;

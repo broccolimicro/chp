@@ -6,7 +6,7 @@
  */
 
 #include <common/standard.h>
-#include <arithmetic/assignment.h>
+#include <arithmetic/action.h>
 #include <ucs/variable.h>
 #include <petri/graph.h>
 
@@ -31,12 +31,13 @@ struct transition : petri::transition
 {
 	transition();
 	transition(arithmetic::expression e);
-	transition(arithmetic::assignment a);
-	transition(vector<arithmetic::assignment> a);
-	transition(vector<vector<arithmetic::assignment> > a);
+	transition(arithmetic::action a);
+	transition(arithmetic::cube a);
+	transition(arithmetic::cover a);
 	~transition();
 
-	vector<vector<arithmetic::assignment> > actions;
+	arithmetic::cover local_action;
+	arithmetic::cover remote_action;
 
 	static transition merge(int composition, const transition &t0, const transition &t1);
 	static bool mergeable(int composition, const transition &t0, const transition &t1);
@@ -51,6 +52,8 @@ struct graph : petri::graph<petri::place, chp::transition, petri::token, chp::st
 
 	graph();
 	~graph();
+
+	void post_process(const ucs::variable_set &variables, bool proper_nesting = false);
 };
 
 }
