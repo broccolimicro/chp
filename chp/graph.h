@@ -25,8 +25,6 @@ using petri::sequence;
 
 typedef petri::place place;
 
-
-
 struct transition : petri::transition
 {
 	transition();
