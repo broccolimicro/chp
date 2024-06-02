@@ -1,9 +1,4 @@
-/*
- * graph.h
- *
- *  Created on: Feb 1, 2015
- *      Author: nbingham
- */
+#pragma once
 
 #include <common/standard.h>
 #include <arithmetic/action.h>
@@ -11,9 +6,6 @@
 #include <petri/graph.h>
 
 #include "state.h"
-
-#ifndef chp_graph_h
-#define chp_graph_h
 
 namespace chp
 {
@@ -30,12 +22,13 @@ struct transition : petri::transition
 	transition();
 	transition(arithmetic::expression e);
 	transition(arithmetic::action a);
-	transition(arithmetic::cube a);
-	transition(arithmetic::cover a);
+	transition(arithmetic::parallel a);
+	transition(arithmetic::choice a);
 	~transition();
 
-	arithmetic::cover local_action;
-	arithmetic::cover remote_action;
+	arithmetic::expression guard;
+	arithmetic::choice local_action;
+	arithmetic::choice remote_action;
 
 	static transition merge(int composition, const transition &t0, const transition &t1);
 	static bool mergeable(int composition, const transition &t0, const transition &t1);
@@ -56,4 +49,3 @@ struct graph : petri::graph<petri::place, chp::transition, petri::token, chp::st
 
 }
 
-#endif

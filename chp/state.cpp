@@ -6,25 +6,28 @@
  */
 
 #include <common/text.h>
+#include <interpret_arithmetic/export.h>
 #include "state.h"
 #include "graph.h"
-#include <interpret_arithmetic/export.h>
 
 namespace chp
 {
 
 term_index::term_index()
 {
+	index = -1;
 	term = -1;
 }
 
-term_index::term_index(int index) : petri::term_index(index)
+term_index::term_index(int index)
 {
+	this->index = index;
 	term = -1;
 }
 
-term_index::term_index(int index, int term) : petri::term_index(index)
+term_index::term_index(int index, int term)
 {
+	this->index = index;
 	this->term = term;
 }
 
@@ -41,7 +44,7 @@ void term_index::hash(hasher &hash) const
 
 string term_index::to_string(const graph &g, const ucs::variable_set &v)
 {
-	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + export_composition(g.transitions[index].local_action.cubes[term], v).to_string();
+	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + export_expression(g.transitions[index].guard, v).to_string() + " -> " + export_composition(g.transitions[index].local_action[term], v).to_string();
 }
 
 bool operator<(term_index i, term_index j)
@@ -81,17 +84,25 @@ bool operator!=(term_index i, term_index j)
 enabled_transition::enabled_transition()
 {
 	index = 0;
-	vacuous = false;
+	vacuous = true;
 	stable = true;
-	guard = arithmetic::operand(1);
+	guard = arithmetic::operand(0, arithmetic::operand::constant);
 }
 
 enabled_transition::enabled_transition(int index)
 {
 	this->index = index;
-	vacuous = false;
+	vacuous = true;
 	stable = true;
-	guard = arithmetic::operand(1);
+	guard = arithmetic::operand(0, arithmetic::operand::constant);
+}
+
+enabled_transition::enabled_transition(int index, int term)
+{
+	this->index = index;
+	vacuous = true;
+	stable = true;
+	guard = arithmetic::operand(0, arithmetic::operand::constant);
 }
 
 enabled_transition::~enabled_transition()
@@ -99,71 +110,66 @@ enabled_transition::~enabled_transition()
 
 }
 
+string enabled_transition::to_string(const graph &g, const ucs::variable_set &v)
+{
+	return "T" + ::to_string(index) + ":" + export_expression(g.transitions[index].guard, v).to_string() + " -> " + export_composition(g.transitions[index].local_action, v).to_string();
+}
+
 bool operator<(enabled_transition i, enabled_transition j)
 {
-	return ((term_index)i < (term_index)j) ||
-		   ((term_index)i == (term_index)j && i.history < j.history);
+	return (i.index < j.index) ||
+		   (i.index == j.index && i.history < j.history);
 }
 
 bool operator>(enabled_transition i, enabled_transition j)
 {
-	return ((term_index)i > (term_index)j) ||
-		   ((term_index)i == (term_index)j && i.history > j.history);
+	return (i.index > j.index) ||
+		   (i.index == j.index && i.history > j.history);
 }
 
 bool operator<=(enabled_transition i, enabled_transition j)
 {
-	return ((term_index)i < (term_index)j) ||
-		   ((term_index)i == (term_index)j && i.history <= j.history);
+	return (i.index < j.index) ||
+		   (i.index == j.index && i.history <= j.history);
 }
 
 bool operator>=(enabled_transition i, enabled_transition j)
 {
-	return ((term_index)i > (term_index)j) ||
-		   ((term_index)i == (term_index)j && i.history >= j.history);
+	return (i.index > j.index) ||
+		   (i.index == j.index && i.history >= j.history);
 }
 
 bool operator==(enabled_transition i, enabled_transition j)
 {
-	return ((term_index)i == (term_index)j && i.history == j.history);
+	return (i.index == j.index && i.history == j.history);
 }
 
 bool operator!=(enabled_transition i, enabled_transition j)
 {
-	return ((term_index)i != (term_index)j || i.history != j.history);
+	return (i.index != j.index || i.history != j.history);
 }
 
-local_token::local_token()
+token::token()
 {
 	index = 0;
-	guard = arithmetic::operand(1);
 }
 
-local_token::local_token(int index)
+token::token(petri::token t)
+{
+	index = t.index;
+}
+
+token::token(int index)
 {
 	this->index = index;
-	guard = arithmetic::operand(1);
 }
 
-local_token::local_token(token t)
-{
-	this->index = t.index;
-	guard = arithmetic::operand(1);
-}
-
-local_token::local_token(int index, arithmetic::expression guard, vector<enabled_transition> prev)
-{
-	this->index = index;
-	this->guard = guard;
-	this->prev = prev;
-}
-
-local_token::~local_token()
+token::~token()
 {
 
 }
 
-string local_token::to_string()
+string token::to_string()
 {
 	return "P" + ::to_string(index);
 }
@@ -172,16 +178,19 @@ state::state()
 {
 }
 
-state::state(vector<token> tokens, vector<arithmetic::value> encodings)
+state::state(vector<petri::token> tokens, arithmetic::state encodings)
 {
 	this->tokens = tokens;
 	this->encodings = encodings;
 }
 
-state::state(vector<local_token> tokens, vector<arithmetic::value> encoding)
+state::state(vector<chp::token> tokens, arithmetic::state encodings)
 {
-	this->tokens = tokens;
-	this->encodings = encoding;
+	for (int i = 0; i < (int)tokens.size(); i++)
+		this->tokens.push_back(tokens[i]);
+
+	sort(this->tokens.begin(), this->tokens.end());
+	this->encodings = encodings;
 }
 
 state::~state()
@@ -202,14 +211,7 @@ state state::merge(const state &s0, const state &s1)
 	::merge(s0.tokens.begin(), s0.tokens.end(), s1.tokens.begin(), s1.tokens.end(), result.tokens.begin());
 	result.tokens.resize(unique(result.tokens.begin(), result.tokens.end()) - result.tokens.begin());
 
-	int m = min(s0.encodings.size(), s1.encodings.size());
-	for (int k = 0; k < m; k++)
-	{
-		if (s0.encodings[k].data != s1.encodings[k])
-			result.encodings.push_back(arithmetic::value::unknown);
-		else
-			result.encodings.push_back(s0.encodings[k]);
-	}
+	result.encodings = s0.encodings & s1.encodings;
 
 	return result;
 }
@@ -219,26 +221,31 @@ state state::collapse(int index, const state &s)
 	state result;
 
 	result.tokens.push_back(petri::token(index));
-
 	result.encodings = s.encodings;
 
 	return result;
 }
 
-state state::convert(map<petri::iterator, petri::iterator> translate) const
+state state::convert(map<petri::iterator, vector<petri::iterator> > translate) const
 {
 	state result;
 
 	for (int i = 0; i < (int)tokens.size(); i++)
 	{
-		map<petri::iterator, petri::iterator>::iterator loc = translate.find(petri::iterator(place::type, tokens[i].index));
+		map<petri::iterator, vector<petri::iterator> >::iterator loc = translate.find(petri::iterator(place::type, tokens[i].index));
 		if (loc != translate.end())
-			result.tokens.push_back(petri::token(loc->second.index));
+			for (int j = 0; j < (int)loc->second.size(); j++)
+				result.tokens.push_back(petri::token(loc->second[j].index));
 	}
 
 	result.encodings = encodings;
 
 	return result;
+}
+
+bool state::is_subset_of(const state &s)
+{
+	return (tokens == s.tokens && encodings.is_subset_of(s.encodings));
 }
 
 string state::to_string(const ucs::variable_set &variables)
@@ -250,16 +257,55 @@ string state::to_string(const ucs::variable_set &variables)
 			result += " ";
 		result += ::to_string(tokens[i].index);
 	}
-	result += "} ";
+	result += "} " + export_expression(encodings, variables).to_string();
+	return result;
+}
 
-	for (int i = 0; i < (int)encodings.size(); i++)
+ostream &operator<<(ostream &os, state s)
+{
+	os << "{";
+	for (int i = 0; i < (int)s.tokens.size(); i++)
 	{
 		if (i != 0)
-			result += ", ";
-		result += variables.nodes[i].to_string() + "=" + ::to_string(encodings[i]);
+			os << " ";
+		os << s.tokens[i].index;
 	}
+	os << "} " << s.encodings;
+	return os;
+}
 
-	return result;
+bool operator<(state s1, state s2)
+{
+	return (s1.tokens < s2.tokens) ||
+		   (s1.tokens == s2.tokens && s1.encodings < s2.encodings);
+}
+
+bool operator>(state s1, state s2)
+{
+	return (s1.tokens > s2.tokens) ||
+		   (s1.tokens == s2.tokens && s1.encodings > s2.encodings);
+}
+
+bool operator<=(state s1, state s2)
+{
+	return (s1.tokens < s2.tokens) ||
+		   (s1.tokens == s2.tokens && s1.encodings <= s2.encodings);
+}
+
+bool operator>=(state s1, state s2)
+{
+	return (s1.tokens > s2.tokens) ||
+		   (s1.tokens == s2.tokens && s1.encodings >= s2.encodings);
+}
+
+bool operator==(state s1, state s2)
+{
+	return s1.tokens == s2.tokens && s1.encodings == s2.encodings;
+}
+
+bool operator!=(state s1, state s2)
+{
+	return s1.tokens != s2.tokens || s1.encodings != s2.encodings;
 }
 
 }
