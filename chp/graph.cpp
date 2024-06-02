@@ -80,7 +80,7 @@ bool transition::is_infeasible()
 		for (int j = 0; j < (int)local_action.terms[i].actions.size() && feasible; j++)
 			if (local_action.terms[i].actions[j].expr.is_constant())
 			{
-				arithmetic::value eval = local_action.terms[i].actions[j].expr.evaluate(vector<arithmetic::value>());
+				arithmetic::value eval = local_action.terms[i].actions[j].expr.evaluate(arithmetic::state());
 				feasible = (eval.data != arithmetic::value::neutral);
 			}
 
@@ -103,7 +103,7 @@ bool transition::is_vacuous()
 		{
 			if (local_action.terms[i].actions[j].variable < 0 && local_action.terms[i].actions[j].channel < 0 && local_action.terms[i].actions[j].expr.is_constant())
 			{
-				arithmetic::value eval = local_action.terms[i].actions[j].expr.evaluate(vector<arithmetic::value>());
+				arithmetic::value eval = local_action.terms[i].actions[j].expr.evaluate(arithmetic::state());
 				vacuous = (eval.data != arithmetic::value::neutral);
 			}
 			else
