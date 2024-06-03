@@ -45,6 +45,8 @@ struct graph : petri::graph<petri::place, chp::transition, petri::token, chp::st
 	~graph();
 
 	void post_process(const ucs::variable_set &variables, bool proper_nesting = false);
+	void decompose(const use::variable_set &variables);
+	void expand(const ucs::variable_set &variables);
 };
 
 }

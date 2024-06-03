@@ -126,12 +126,100 @@ graph::~graph()
 
 }
 
-void graph::post_process(const ucs::variable_set &variables, bool proper_nesting)
-{
-	for (int i = 0; i < (int)transitions.size(); i++)
+void graph::post_process(const ucs::variable_set &variables, bool proper_nesting) {
+	for (int i = 0; i < (int)transitions.size(); i++) {
 		transitions[i].remote_action = transitions[i].local_action.remote(variables.get_groups());
+	}
+}
 
-	
+void graph::decompose(const use::variable_set &variables) {
+	// TODO Process Decomposition and Projection
+	//
+	// The goal of this project is to break up a large sequential process into
+	// many smaller parallel processes. This step in the compilation has an
+	// enormous effect on the performance and power of the finaly design. It
+	// increases parallelism and reduces the size of the state space for each
+	// process, making it easier for the later stages of the compilation process
+	// to complete.
+	//
+	// The following steps are guidelines and not hard rules. If you think you
+	// found a better way to approach the problem, then feel free to chase that
+	// down. If you need supporting infrastructure anywhere else in the project,
+	// feel free to add that in. If you need to modify this function definition,
+	// go for it.
+	//
+	// 1. Fill out chp::graph as needed
+	// 	 a. Work with team members to identify shared and unique requirements for the CHP graph class
+	//   b. Create the data structures necessary to implement those requirements
+	//
+	// 2. Process Decomposition
+	//   a. Given a collection of contiguous actions in the CHP graph determine the
+	//      set of input and output data dependencies for those actions
+	//   b. Cut those actions out of the process and put them in their own process
+	//   c. Create two new channels
+	//   d. Insert channel actions to tie together the new processes
+	//
+	// 3. Projection
+	//   a. Identify dataless channels
+	//   b. Look for probes on those channels in multi-guard selection statements
+	//   c. Mark all channels without those probes as slack elastic
+	//
+	// === Successful completion of project ===
+	// 
+	// Your time is yours, what do you want to tackle next?
+	// Some ideas:
+	// 1. Remove all channel actions for dataless slack elastic channels
+	// 2. Delete channels from variable space
+	//
+	// Final cleaup:
+	// 1. Clean up any bugs
+	// 2. Prepare demo
+	// 3. Document as needed
+}
+
+void expand(const ucs::variable_set &variables) {
+	// TODO Handshake Expansion and Reshuffling
+	//
+	// The goal of this project is given a CHP circuit specification, break that
+	// specification down into boolean assignments and guards on wires, and write
+	// that out into an HSE for the rest of the flow. The Handshake Reshuffling
+	// step has a large effect on the difficulty of the state variable insertion
+	// algorithm and therefore the size of the circuit down the line.
+	//
+	// The following steps are guidelines and not hard rules. If you think you
+	// found a better way to approach the problem, then feel free to chase that
+	// down. If you need supporting infrastructure anywhere else in the project,
+	// feel free to add that in. If you need to modify this function definition,
+	// go for it.
+ 	//
+	// 1. Fill out chp::graph as needed
+	//   a. Work with team members to identify shared and unique requirements for the CHP graph class
+	//   b. Create the data structures necessary to implement those requirements
+	//
+	// 2. Build channel protocol definitions into CHP language
+	//   a. define language in haystack/lib/parse_chp
+	//   b. create structures in haystack/lib/chp to support multiple processes
+	//   c. work with haystack/lib/interpret_chp to fill in those processes from the parsed abstract syntax tree
+	//
+	// 3. Expand channel actions
+	//   a. Cut and paste channel protocol definitions
+	//   b. Create the more complex data dependencies necessary for the most parallel implementation of each composition operation
+	//
+	// 4. Handshake Reshuffling
+	//   a. Create a function that can prune a set of orderings given as input, while maintaining circuit correctness (stability, non-interference, etc)
+	//
+	// === Successful completion of project ===
+	//
+	// Your time is yours, what do you want to tackle next?
+	// Some ideas:
+	// 1. Identify the orderings which result in the most ambiguous state encodings, or are associated with the most conflicts.
+	// 2. Apply your previous function to prune those orderings from the handshaking expansions.
+	// 3. create an HSE exporter for your expanded CHP graph.
+	//
+	// Final cleaup:
+	// 1. Clean up any bugs
+	// 2. Prepare demo
+	// 3. Document as needed
 }
 
 }
