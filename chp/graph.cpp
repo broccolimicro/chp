@@ -132,7 +132,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 	}
 }
 
-void graph::decompose(const use::variable_set &variables) {
+void graph::decompose(const ucs::variable_set &variables) {
 	// TODO Process Decomposition and Projection
 	//
 	// The goal of this project is to break up a large sequential process into
