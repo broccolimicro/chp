@@ -12,30 +12,51 @@
 namespace chp
 {
 
+place::place()
+{
+	arbiter = false;
+}
+
+place::~place()
+{
+
+}
+
+// Merge two places and combine the predicate and effective predicate.
+// composition can be one of:
+// 1. petri::parallel
+// 2. petri::choice
+// 3. petri::sequence
+// See haystack/lib/petri/petri/graph.h for their definitions.
+place place::merge(int composition, const place &p0, const place &p1)
+{
+	place result;
+	result.arbiter = (p0.arbiter or p1.arbiter);
+	return result;
+}
+
 transition::transition()
 {
 	local_action.terms.push_back(arithmetic::parallel());
 }
 
-transition::transition(arithmetic::expression e)
+transition::transition(arithmetic::expression guard, arithmetic::action assign)
 {
-	local_action = arithmetic::choice(e);
+	this->guard = guard;
+	this->local_action.terms.push_back(arithmetic::parallel());
+	this->local_action.terms.back().actions.push_back(assign);
 }
 
-transition::transition(arithmetic::action a)
+transition::transition(arithmetic::expression guard, arithmetic::parallel assign)
 {
-	local_action.terms.push_back(arithmetic::parallel());
-	local_action.terms.back().actions.push_back(a);
+	this->guard = guard;
+	this->local_action.terms.push_back(assign);
 }
 
-transition::transition(arithmetic::parallel a)
+transition::transition(arithmetic::expression guard, arithmetic::choice assign)
 {
-	local_action.terms.push_back(a);
-}
-
-transition::transition(arithmetic::choice a)
-{
-	local_action = a;
+	this->guard = guard;
+	this->local_action = assign;
 }
 
 transition::~transition()

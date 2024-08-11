@@ -15,15 +15,29 @@ using petri::parallel;
 using petri::choice;
 using petri::sequence;
 
-typedef petri::place place;
+struct place : petri::place
+{
+	place();
+	~place();
+
+	// inherited from petri::place
+	// vector<split_group> groups;
+
+	// if true, more than one output transition from this place can be enabled
+	// simultaneously. This means that the hardware needs to make a
+	// non-deterministic decision about which one to fire. This is generally done
+	// with an arbiter.
+	bool arbiter;
+
+	static place merge(int composition, const place &p0, const place &p1);
+};
 
 struct transition : petri::transition
 {
 	transition();
-	transition(arithmetic::expression e);
-	transition(arithmetic::action a);
-	transition(arithmetic::parallel a);
-	transition(arithmetic::choice a);
+	transition(arithmetic::expression guard, arithmetic::action assign);
+	transition(arithmetic::expression guard, arithmetic::parallel assign);
+	transition(arithmetic::expression guard, arithmetic::choice assign);
 	~transition();
 
 	arithmetic::expression guard;
@@ -37,9 +51,9 @@ struct transition : petri::transition
 	bool is_vacuous();
 };
 
-struct graph : petri::graph<petri::place, chp::transition, petri::token, chp::state>
+struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
 {
-	typedef petri::graph<petri::place, chp::transition, petri::token, chp::state> super;
+	typedef petri::graph<chp::place, chp::transition, petri::token, chp::state> super;
 
 	graph();
 	~graph();

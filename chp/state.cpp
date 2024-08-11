@@ -257,7 +257,7 @@ string state::to_string(const ucs::variable_set &variables)
 			result += " ";
 		result += ::to_string(tokens[i].index);
 	}
-	result += "} " + export_expression(encodings, variables).to_string();
+	result += "} " + export_composition(encodings, variables).to_string();
 	return result;
 }
 
