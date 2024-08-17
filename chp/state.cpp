@@ -44,7 +44,7 @@ void term_index::hash(hasher &hash) const
 
 string term_index::to_string(const graph &g, const ucs::variable_set &v)
 {
-	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + export_expression(g.transitions[index].guard, v).to_string() + " -> " + export_composition(g.transitions[index].local_action[term], v).to_string();
+	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + export_expression(g.transitions[index].guard, v).to_string() + " -> " + export_composition(g.transitions[index].action[term], v).to_string();
 }
 
 bool operator<(term_index i, term_index j)
@@ -112,7 +112,7 @@ enabled_transition::~enabled_transition()
 
 string enabled_transition::to_string(const graph &g, const ucs::variable_set &v)
 {
-	return "T" + ::to_string(index) + ":" + export_expression(g.transitions[index].guard, v).to_string() + " -> " + export_composition(g.transitions[index].local_action, v).to_string();
+	return "T" + ::to_string(index) + ":" + export_expression(g.transitions[index].guard, v).to_string() + " -> " + export_composition(g.transitions[index].action, v).to_string();
 }
 
 bool operator<(enabled_transition i, enabled_transition j)
@@ -149,6 +149,17 @@ bool operator!=(enabled_transition i, enabled_transition j)
 	return (i.index != j.index || i.history != j.history);
 }
 
+firing::firing(const enabled_transition &t, int i) {
+	this->guard_action = t.guard_action;
+	this->local_action = t.local_action[i];
+	this->remote_action = t.remote_action[i];
+	this->index.index = t.index;
+	this->index.term = i;
+}
+
+firing::~firing() {
+}
+
 token::token()
 {
 	index = 0;
@@ -159,9 +170,11 @@ token::token(petri::token t)
 	index = t.index;
 }
 
-token::token(int index)
+token::token(int index, arithmetic::expression guard, int cause)
 {
 	this->index = index;
+	this->guard = guard;
+	this->cause = cause;
 }
 
 token::~token()

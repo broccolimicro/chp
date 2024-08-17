@@ -11,6 +11,7 @@ namespace chp
 {
 
 struct graph;
+struct firing;
 
 // This points to the cube 'term' in the action of transition 'index' in a graph.
 struct term_index
@@ -48,13 +49,32 @@ struct enabled_transition : petri::enabled_transition
 	// inherited from petri::enabled_transition
 	// int index;
 	// vector<int> tokens;
+	
+	// An enabled transition creates tokens on its output before we ever fire it.
+	// If the transition is vacuous, these tokens can then be used to enable the
+	// next non-vacuous transition. This vector keeps track of the index of each
+	// of those output tokens.
+	vector<int> output_marking;
 
+	// An enabled transition's history keeps track of every transition that fired
+	// between when this transition was enabled and when it fires. This allows us
+	// to determine whether this transition was stable and non-interfering when
+	// we finally decide to let the event fire.
 	vector<term_index> history;
 	
+	// The intersection of all of the terms of the guard of this transition which
+	// the current state passed. This is ANDed into the current state to fill in
+	// missing information.
 	arithmetic::state guard_action;
+	arithmetic::region local_action;
+	arithmetic::region remote_action;
 
 	// The effective guard of this enabled transition.
 	arithmetic::expression guard;
+
+	// The collection of all the guards through vacuous transitions leading to
+	// this transition.
+	arithmetic::expression depend;
 
 	// An enabled transition is vacuous if the assignment would leave the current
 	// state encoding unaffected.
@@ -74,6 +94,16 @@ bool operator>=(enabled_transition i, enabled_transition j);
 bool operator==(enabled_transition i, enabled_transition j);
 bool operator!=(enabled_transition i, enabled_transition j);
 
+struct firing {
+	firing(const enabled_transition &t, int i);
+	~firing();
+
+	arithmetic::state guard_action;
+	arithmetic::state local_action;
+	arithmetic::state remote_action;
+	term_index index;
+};
+
 // Tokens are like program counters, marking the position of the current state
 // of execution. A token may exist at any place in the HSE as long as it is not
 // possible for more than one token to exist in that place.
@@ -81,12 +111,16 @@ struct token : petri::token
 {
 	token();
 	token(petri::token t);
-	token(int index);
+	token(int index, arithmetic::expression guard, int cause=-1);
 	~token();
 
 	// The current place this token resides at.
 	// inherited from petri::token
 	// int index
+
+	arithmetic::expression guard;
+
+	int cause;
 
 	string to_string();
 };

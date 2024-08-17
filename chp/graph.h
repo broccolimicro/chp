@@ -41,8 +41,7 @@ struct transition : petri::transition
 	~transition();
 
 	arithmetic::expression guard;
-	arithmetic::choice local_action;
-	arithmetic::choice remote_action;
+	arithmetic::choice action;
 
 	static transition merge(int composition, const transition &t0, const transition &t1);
 	static bool mergeable(int composition, const transition &t0, const transition &t1);
@@ -58,9 +57,13 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	graph();
 	~graph();
 
-	void post_process(const ucs::variable_set &variables, bool proper_nesting = false);
+	chp::transition &at(term_index idx);
+	arithmetic::parallel &term(term_index idx);
+
+	void post_process(const ucs::variable_set &variables, bool proper_nesting = false, bool aggressive = false);
 	void decompose(const ucs::variable_set &variables);
 	void expand(const ucs::variable_set &variables);
+	arithmetic::expression exclusion(int index) const;
 };
 
 }

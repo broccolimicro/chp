@@ -9,6 +9,8 @@
 #include <common/message.h>
 #include <common/text.h>
 
+#include <chp/simulator.h>
+
 namespace chp
 {
 
@@ -37,26 +39,26 @@ place place::merge(int composition, const place &p0, const place &p1)
 
 transition::transition()
 {
-	local_action.terms.push_back(arithmetic::parallel());
+	action.terms.push_back(arithmetic::parallel());
 }
 
 transition::transition(arithmetic::expression guard, arithmetic::action assign)
 {
 	this->guard = guard;
-	this->local_action.terms.push_back(arithmetic::parallel());
-	this->local_action.terms.back().actions.push_back(assign);
+	this->action.terms.push_back(arithmetic::parallel());
+	this->action.terms.back().actions.push_back(assign);
 }
 
 transition::transition(arithmetic::expression guard, arithmetic::parallel assign)
 {
 	this->guard = guard;
-	this->local_action.terms.push_back(assign);
+	this->action.terms.push_back(assign);
 }
 
 transition::transition(arithmetic::expression guard, arithmetic::choice assign)
 {
 	this->guard = guard;
-	this->local_action = assign;
+	this->action = assign;
 }
 
 transition::~transition()
@@ -69,18 +71,18 @@ transition transition::merge(int composition, const transition &t0, const transi
 	transition result;
 	if (composition == petri::parallel || composition == petri::sequence)
 	{
-		for (int i = 0; i < (int)t0.local_action.terms.size(); i++)
-			for (int j = 0; j < (int)t1.local_action.terms.size(); j++)
+		for (int i = 0; i < (int)t0.action.terms.size(); i++)
+			for (int j = 0; j < (int)t1.action.terms.size(); j++)
 			{
-				result.local_action.terms.push_back(arithmetic::parallel());
-				result.local_action.terms.back().actions.insert(result.local_action.terms.back().actions.end(), t0.local_action.terms[i].actions.begin(), t0.local_action.terms[i].actions.end());
-				result.local_action.terms.back().actions.insert(result.local_action.terms.back().actions.end(), t1.local_action.terms[j].actions.begin(), t1.local_action.terms[j].actions.end());
+				result.action.terms.push_back(arithmetic::parallel());
+				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t0.action.terms[i].actions.begin(), t0.action.terms[i].actions.end());
+				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t1.action.terms[j].actions.begin(), t1.action.terms[j].actions.end());
 			}
 	}
 	else if (composition == petri::choice)
 	{
-		result.local_action.terms.insert(result.local_action.terms.end(), t0.local_action.terms.begin(), t0.local_action.terms.end());
-		result.local_action.terms.insert(result.local_action.terms.end(), t1.local_action.terms.begin(), t1.local_action.terms.end());
+		result.action.terms.insert(result.action.terms.end(), t0.action.terms.begin(), t0.action.terms.end());
+		result.action.terms.insert(result.action.terms.end(), t1.action.terms.begin(), t1.action.terms.end());
 	}
 	return result;
 }
@@ -92,16 +94,16 @@ bool transition::mergeable(int composition, const transition &t0, const transiti
 
 bool transition::is_infeasible()
 {
-	if (local_action.terms.size() == 0)
+	if (action.terms.size() == 0)
 		return true;
 
-	for (int i = 0; i < (int)local_action.terms.size(); i++)
+	for (int i = 0; i < (int)action.terms.size(); i++)
 	{
 		bool feasible = true;
-		for (int j = 0; j < (int)local_action.terms[i].actions.size() && feasible; j++)
-			if (local_action.terms[i].actions[j].expr.is_constant())
+		for (int j = 0; j < (int)action.terms[i].actions.size() && feasible; j++)
+			if (action.terms[i].actions[j].expr.is_constant())
 			{
-				arithmetic::value eval = local_action.terms[i].actions[j].expr.evaluate(arithmetic::state());
+				arithmetic::value eval = action.terms[i].actions[j].expr.evaluate(arithmetic::state());
 				feasible = (eval.data != arithmetic::value::neutral);
 			}
 
@@ -114,17 +116,17 @@ bool transition::is_infeasible()
 
 bool transition::is_vacuous()
 {
-	if (local_action.terms.size() == 0)
+	if (action.terms.size() == 0)
 		return false;
 
-	for (int i = 0; i < (int)local_action.terms.size(); i++)
+	for (int i = 0; i < (int)action.terms.size(); i++)
 	{
 		bool vacuous = true;
-		for (int j = 0; j < (int)local_action.terms[i].actions.size() && vacuous; j++)
+		for (int j = 0; j < (int)action.terms[i].actions.size() && vacuous; j++)
 		{
-			if (local_action.terms[i].actions[j].variable < 0 && local_action.terms[i].actions[j].channel < 0 && local_action.terms[i].actions[j].expr.is_constant())
+			if (action.terms[i].actions[j].variable < 0 && action.terms[i].actions[j].channel < 0 && action.terms[i].actions[j].expr.is_constant())
 			{
-				arithmetic::value eval = local_action.terms[i].actions[j].expr.evaluate(arithmetic::state());
+				arithmetic::value eval = action.terms[i].actions[j].expr.evaluate(arithmetic::state());
 				vacuous = (eval.data != arithmetic::value::neutral);
 			}
 			else
@@ -147,10 +149,232 @@ graph::~graph()
 
 }
 
-void graph::post_process(const ucs::variable_set &variables, bool proper_nesting) {
-	for (int i = 0; i < (int)transitions.size(); i++) {
-		transitions[i].remote_action = transitions[i].local_action.remote(variables.get_groups());
+chp::transition &graph::at(term_index idx) {
+	return transitions[idx.index];
+}
+
+arithmetic::parallel &graph::term(term_index idx) {
+	return transitions[idx.index].action.terms[idx.term];
+}
+
+void graph::post_process(const ucs::variable_set &variables, bool proper_nesting, bool aggressive) {
+	// Handle Reset Behavior
+	bool change = true;
+	while (change)
+	{
+		super::reduce(proper_nesting, aggressive);
+
+		for (int i = 0; i < (int)source.size(); i++)
+		{
+			simulator::super sim(this, source[i]);
+			sim.enabled();
+
+			change = false;
+			for (int j = 0; j < (int)sim.ready.size() and not change; j++)
+			{
+				bool firable = transitions[sim.ready[j].index].action.terms.size() <= 1;
+				for (int k = 0; k < (int)sim.ready[j].tokens.size() && firable; k++)
+				{
+					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++)
+						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index)
+							firable = false;
+					for (int l = 0; l < (int)arcs[petri::place::type].size() and firable; l++)
+						if (arcs[petri::place::type][l].from.index == sim.tokens[sim.ready[j].tokens[k]].index and arcs[petri::place::type][l].to.index != sim.ready[j].index)
+							firable = false;
+				}
+
+				if (firable) {
+					petri::enabled_transition t = sim.fire(j);
+					source[i].tokens = sim.tokens;
+					for (int k = (int)transitions[t.index].action.terms.size()-1; k >= 0; k--) {
+						int idx = i;
+						if (k > 0) {
+							idx = source.size();
+							source.push_back(source[i]);
+						}
+
+						arithmetic::state guard_action;
+						int pass = passes_guard(source[idx].encodings, source[idx].encodings, transitions[t.index].guard, &guard_action);
+						source[idx].encodings &= guard_action;
+
+						arithmetic::state local = transitions[t.index].action.terms[k].evaluate(source[idx].encodings);
+						arithmetic::state remote = local.remote(variables.get_groups());
+
+						source[idx].encodings = local_assign(source[idx].encodings, local, true);
+						source[idx].encodings = remote_assign(source[idx].encodings, remote, true);
+					}
+
+					change = true;
+				}
+			}
+		}
+
+		for (int i = 0; i < (int)reset.size(); i++)
+		{
+			simulator::super sim(this, reset[i]);
+			sim.enabled();
+
+			change = false;
+			for (int j = 0; j < (int)sim.ready.size() && !change; j++)
+			{
+				bool firable = transitions[sim.ready[j].index].action.terms.size() <= 1;
+				for (int k = 0; k < (int)sim.ready[j].tokens.size() && firable; k++)
+				{
+					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++)
+						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index)
+							firable = false;
+					for (int l = 0; l < (int)arcs[petri::place::type].size() and firable; l++)
+						if (arcs[petri::place::type][l].from.index == sim.tokens[sim.ready[j].tokens[k]].index and arcs[petri::place::type][l].to.index != sim.ready[j].index)
+							firable = false;
+				}
+
+				if (firable) {
+					petri::enabled_transition t = sim.fire(j);
+					reset[i].tokens = sim.tokens;
+					for (int k = (int)transitions[t.index].action.terms.size()-1; k >= 0; k--) {
+						int idx = i;
+						if (k > 0) {
+							idx = reset.size();
+							reset.push_back(reset[i]);
+						}
+
+						arithmetic::state guard_action;
+						int pass = passes_guard(reset[idx].encodings, reset[idx].encodings, transitions[t.index].guard, &guard_action);
+						reset[idx].encodings &= guard_action;
+
+						arithmetic::state local = transitions[t.index].action.terms[k].evaluate(reset[idx].encodings);
+						arithmetic::state remote = local.remote(variables.get_groups());
+
+						reset[idx].encodings = local_assign(reset[idx].encodings, local, true);
+						reset[idx].encodings = remote_assign(reset[idx].encodings, remote, true);
+					}
+
+					change = true;
+				}
+			}
+		}
 	}
+
+	change = true;
+	while (change) {
+		super::reduce(proper_nesting, aggressive);
+
+		// Remove skips
+		change = false;
+		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() && !change; i++) {
+			if (transitions[i.index].action.is_tautology()) {
+				vector<petri::iterator> n = next(i); // places
+				if (n.size() > 1) {
+					vector<petri::iterator> p = prev(i); // places
+					vector<vector<petri::iterator> > pp;
+					for (int j = 0; j < (int)p.size(); j++) {
+						pp.push_back(prev(p[j]));
+					}
+
+					for (int k = (int)arcs[petri::transition::type].size()-1; k >= 0; k--) {
+						if (arcs[petri::transition::type][k].from == i) {
+							disconnect(petri::iterator(petri::transition::type, k));
+						}
+					}
+
+					vector<petri::iterator> copies;
+					copies.push_back(i);
+					for (int k = 0; k < (int)n.size(); k++) {
+						if (k > 0) {
+							copies.push_back(copy(i));
+							for (int l = 0; l < (int)p.size(); l++) {
+								petri::iterator x = copy(p[l]);
+								connect(pp[l], x);
+								connect(x, copies.back());
+							}
+						}
+						connect(copies.back(), n[k]);
+					}
+					change = true;
+				}
+			}
+		}
+		if (change)
+			continue;
+
+		// If there is a guard at the end of a conditional branch, then we unzip
+		// the conditional merge by one transition (make copies of the next
+		// transition on each branch and move the merge down the sequence). This
+		// allows us to merge that guard at the end of the conditional branch into
+		// the transition.
+		for (petri::iterator i(place::type, 0); i < (int)places.size() && !change; i++) {
+			vector<petri::iterator> p = prev(i);
+			vector<petri::iterator> active, passive;
+			for (int k = 0; k < (int)p.size(); k++) {
+				if (transitions[p[k].index].action.is_tautology()) {
+					passive.push_back(p[k]);
+				} else {
+					active.push_back(p[k]);
+				}
+			}
+
+			if (passive.size() > 1 || (passive.size() == 1 && active.size() > 0)) {
+				vector<petri::iterator> copies;
+				if ((int)active.size() == 0) {
+					copies.push_back(i);
+				}
+
+				vector<petri::iterator> n = next(i);
+				vector<vector<petri::iterator> > nn;
+				for (int l = 0; l < (int)n.size(); l++) {
+					nn.push_back(next(n[l]));
+				}
+				vector<vector<petri::iterator> > np;
+				for (int l = 0; l < (int)n.size(); l++) {
+					np.push_back(prev(n[l]));
+					np.back().erase(std::remove(np.back().begin(), np.back().end(), i), np.back().end()); 
+				}
+
+				for (int k = 0; k < (int)passive.size(); k++) {
+					// Disconnect this transition
+					for (int l = (int)arcs[petri::transition::type].size()-1; l >= 0; l--) {
+						if (arcs[petri::transition::type][l].from == passive[k]) {
+							disconnect(petri::iterator(petri::transition::type, l));
+						}
+					}
+
+					if (k >= (int)copies.size()) {
+						copies.push_back(create(places[i.index]));
+						for (int l = 0; l < (int)n.size(); l++) {
+							petri::iterator x = copy(n[l]);
+							connect(copies.back(), x);
+							connect(x, nn[l]);
+							connect(np[l], x);
+						}
+					}
+
+					connect(passive[k], copies[k]);
+				}
+
+				change = true;
+			}
+		}
+		if (change)
+			continue;
+
+		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() && !change; i++) {
+			if (transitions[i.index].action.is_tautology()) {
+				vector<petri::iterator> nn = next(next(i)); // transitions
+				for (int l = 0; l < (int)nn.size(); l++) {
+					transitions[nn[l].index] = transition::merge(petri::sequence, transitions[i.index], transitions[nn[l].index]);
+				}
+
+				pinch(i);
+				change = true;
+			}
+		}
+		if (change)
+			continue;
+	}
+
+	// Determine the actual starting location of the tokens given the state information
+	if (reset.size() == 0)
+		reset = source;
 }
 
 void graph::decompose(const ucs::variable_set &variables) {
@@ -241,6 +465,23 @@ void expand(const ucs::variable_set &variables) {
 	// 1. Clean up any bugs
 	// 2. Prepare demo
 	// 3. Document as needed
+}
+
+arithmetic::expression graph::exclusion(int index) const {
+	arithmetic::expression result;
+	vector<int> p = prev(transition::type, index);
+	
+	for (int i = 0; i < (int)p.size(); i++) {
+		vector<int> n = next(place::type, p[i]);
+		if (n.size() > 1) {
+			for (int j = 0; j < (int)n.size(); j++) {
+				if (n[j] != index) {
+					result = result || transitions[n[j]].guard;
+				}
+			}
+		}
+	}
+	return result;
 }
 
 }
