@@ -49,36 +49,36 @@ string term_index::to_string(const graph &g, const ucs::variable_set &v)
 
 bool operator<(term_index i, term_index j)
 {
-	return (i.index < j.index) ||
-		   (i.index == j.index && i.term < j.term);
+	return (i.index < j.index) or
+		   (i.index == j.index and i.term < j.term);
 }
 
 bool operator>(term_index i, term_index j)
 {
-	return (i.index > j.index) ||
-		   (i.index == j.index && i.term > j.term);
+	return (i.index > j.index) or
+		   (i.index == j.index and i.term > j.term);
 }
 
 bool operator<=(term_index i, term_index j)
 {
-	return (i.index < j.index) ||
-		   (i.index == j.index && i.term <= j.term);
+	return (i.index < j.index) or
+		   (i.index == j.index and i.term <= j.term);
 }
 
 bool operator>=(term_index i, term_index j)
 {
-	return (i.index > j.index) ||
-		   (i.index == j.index && i.term >= j.term);
+	return (i.index > j.index) or
+		   (i.index == j.index and i.term >= j.term);
 }
 
 bool operator==(term_index i, term_index j)
 {
-	return (i.index == j.index && i.term == j.term);
+	return (i.index == j.index and i.term == j.term);
 }
 
 bool operator!=(term_index i, term_index j)
 {
-	return (i.index != j.index || i.term != j.term);
+	return (i.index != j.index or i.term != j.term);
 }
 
 enabled_transition::enabled_transition()
@@ -86,7 +86,8 @@ enabled_transition::enabled_transition()
 	index = 0;
 	vacuous = true;
 	stable = true;
-	guard = arithmetic::operand(0, arithmetic::operand::constant);
+	guard = true;
+	depend = true;
 }
 
 enabled_transition::enabled_transition(int index)
@@ -94,7 +95,8 @@ enabled_transition::enabled_transition(int index)
 	this->index = index;
 	vacuous = true;
 	stable = true;
-	guard = arithmetic::operand(0, arithmetic::operand::constant);
+	guard = true;
+	depend = true;
 }
 
 enabled_transition::enabled_transition(int index, int term)
@@ -102,7 +104,8 @@ enabled_transition::enabled_transition(int index, int term)
 	this->index = index;
 	vacuous = true;
 	stable = true;
-	guard = arithmetic::operand(0, arithmetic::operand::constant);
+	guard = true;
+	depend = true;
 }
 
 enabled_transition::~enabled_transition()
@@ -117,36 +120,36 @@ string enabled_transition::to_string(const graph &g, const ucs::variable_set &v)
 
 bool operator<(enabled_transition i, enabled_transition j)
 {
-	return (i.index < j.index) ||
-		   (i.index == j.index && i.history < j.history);
+	return (i.index < j.index) or
+		   (i.index == j.index and i.history < j.history);
 }
 
 bool operator>(enabled_transition i, enabled_transition j)
 {
-	return (i.index > j.index) ||
-		   (i.index == j.index && i.history > j.history);
+	return (i.index > j.index) or
+		   (i.index == j.index and i.history > j.history);
 }
 
 bool operator<=(enabled_transition i, enabled_transition j)
 {
-	return (i.index < j.index) ||
-		   (i.index == j.index && i.history <= j.history);
+	return (i.index < j.index) or
+		   (i.index == j.index and i.history <= j.history);
 }
 
 bool operator>=(enabled_transition i, enabled_transition j)
 {
-	return (i.index > j.index) ||
-		   (i.index == j.index && i.history >= j.history);
+	return (i.index > j.index) or
+		   (i.index == j.index and i.history >= j.history);
 }
 
 bool operator==(enabled_transition i, enabled_transition j)
 {
-	return (i.index == j.index && i.history == j.history);
+	return (i.index == j.index and i.history == j.history);
 }
 
 bool operator!=(enabled_transition i, enabled_transition j)
 {
-	return (i.index != j.index || i.history != j.history);
+	return (i.index != j.index or i.history != j.history);
 }
 
 firing::firing(const enabled_transition &t, int i) {
@@ -163,11 +166,15 @@ firing::~firing() {
 token::token()
 {
 	index = 0;
+	guard = true;
+	cause = -1;
 }
 
 token::token(petri::token t)
 {
 	index = t.index;
+	guard = true;
+	cause = -1;
 }
 
 token::token(int index, arithmetic::expression guard, int cause)
@@ -258,7 +265,7 @@ state state::convert(map<petri::iterator, vector<petri::iterator> > translate) c
 
 bool state::is_subset_of(const state &s)
 {
-	return (tokens == s.tokens && encodings.is_subset_of(s.encodings));
+	return (tokens == s.tokens and encodings.is_subset_of(s.encodings));
 }
 
 string state::to_string(const ucs::variable_set &variables)
@@ -289,36 +296,36 @@ ostream &operator<<(ostream &os, state s)
 
 bool operator<(state s1, state s2)
 {
-	return (s1.tokens < s2.tokens) ||
-		   (s1.tokens == s2.tokens && s1.encodings < s2.encodings);
+	return (s1.tokens < s2.tokens) or
+		   (s1.tokens == s2.tokens and s1.encodings < s2.encodings);
 }
 
 bool operator>(state s1, state s2)
 {
-	return (s1.tokens > s2.tokens) ||
-		   (s1.tokens == s2.tokens && s1.encodings > s2.encodings);
+	return (s1.tokens > s2.tokens) or
+		   (s1.tokens == s2.tokens and s1.encodings > s2.encodings);
 }
 
 bool operator<=(state s1, state s2)
 {
-	return (s1.tokens < s2.tokens) ||
-		   (s1.tokens == s2.tokens && s1.encodings <= s2.encodings);
+	return (s1.tokens < s2.tokens) or
+		   (s1.tokens == s2.tokens and s1.encodings <= s2.encodings);
 }
 
 bool operator>=(state s1, state s2)
 {
-	return (s1.tokens > s2.tokens) ||
-		   (s1.tokens == s2.tokens && s1.encodings >= s2.encodings);
+	return (s1.tokens > s2.tokens) or
+		   (s1.tokens == s2.tokens and s1.encodings >= s2.encodings);
 }
 
 bool operator==(state s1, state s2)
 {
-	return s1.tokens == s2.tokens && s1.encodings == s2.encodings;
+	return s1.tokens == s2.tokens and s1.encodings == s2.encodings;
 }
 
 bool operator!=(state s1, state s2)
 {
-	return s1.tokens != s2.tokens || s1.encodings != s2.encodings;
+	return s1.tokens != s2.tokens or s1.encodings != s2.encodings;
 }
 
 }

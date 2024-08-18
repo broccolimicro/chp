@@ -312,8 +312,10 @@ int simulator::enabled(bool sorted) {
 			// merged into the closest assignment.
 			preload[i].depend = true;
 			for (int j = 0; j < (int)preload[i].tokens.size(); j++) {
-				preload[i].depend = preload[i].depend && tokens[preload[i].tokens[j]].guard;
+				preload[i].depend = preload[i].depend & tokens[preload[i].tokens[j]].guard;
 			}
+			preload[i].guard = base->transitions[preload[i].index].guard & base->transitions[preload[i].index].action.guard();
+
 			//preload[i].depend.hide(base->transitions[preload[i].index].local_action.vars());
 		
 			// Vacuous transitions may pass through a selection statement with
@@ -325,11 +327,11 @@ int simulator::enabled(bool sorted) {
 			// a false-positive for instabilities. So we need to remove the terms in
 			// the propagated guard that have already been acknowledged by other
 			// transitions acknowledged by the base guard and the sequencing.
-			arithmetic::expression guard = preload[i].depend && base->transitions[preload[i].index].guard;
+			arithmetic::expression guard = preload[i].depend & preload[i].guard;
 
 			// Check for unstable transitions
 			bool previously_enabled = false;
-			for (int j = 0; j < (int)loaded.size() && !previously_enabled; j++) {
+			for (int j = 0; j < (int)loaded.size() and not previously_enabled; j++) {
 				if (loaded[j].index == preload[i].index and not loaded[j].vacuous) {
 					preload[i].history = loaded[j].history;
 					previously_enabled = true;
@@ -338,11 +340,12 @@ int simulator::enabled(bool sorted) {
 
 			// Now we check to see if the current state passes the guard
 			int isReady = arithmetic::passes_guard(encoding, global, guard, &preload[i].guard_action);
-			if (isReady < 0 && previously_enabled) {
+
+			if (isReady < 0 and previously_enabled) {
 				isReady = 0;
 			}
 
-			preload[i].local_action = base->transitions[preload[i].index].action.evaluate(encoding);
+			preload[i].local_action = base->transitions[preload[i].index].action.evaluate(encoding & preload[i].guard_action);
 			preload[i].remote_action = preload[i].local_action.remote(variables->get_groups());
 
 			preload[i].stable = (isReady > 0);
@@ -376,7 +379,7 @@ int simulator::enabled(bool sorted) {
 				} else {
 					arithmetic::expression guard = preload[i].depend;
 					if (preload[i].local_action.is_tautology()) {
-						guard = guard && base->transitions[preload[i].index].guard;
+						guard = guard & preload[i].guard;
 					} else {
 						// the guard should be the most minimal possible guard necessary to
 						// guard any multi-branch selection statement (unless the
@@ -384,8 +387,8 @@ int simulator::enabled(bool sorted) {
 						// on to the next transition). If there isn't a multi-term
 						// selection statement, then the guard should be ignored.
 						arithmetic::expression exclude = base->exclusion(preload[i].index);
-						arithmetic::expression weak = arithmetic::weakest_guard(base->transitions[preload[i].index].guard, exclude);
-						guard = guard && weak;
+						arithmetic::expression weak = arithmetic::weakest_guard(preload[i].guard, exclude);
+						guard = guard & weak;
 						//cout << "setting token guard:" << export_expression(base->transitions[preload[i].index].guard, *variables).to_string() << " exclude:" << export_expression(exclude, *variables).to_string() << " weak:" << export_expression(weak, *variables).to_string() << " result:" << export_expression(guard, *variables).to_string() << endl;
 					}
 
@@ -494,14 +497,14 @@ enabled_transition simulator::fire(int index)
 		{
 			// ASSUME ready array is sorted in ascending order
 			bool is_effective = false;
-			for (; j >= 0 && !is_effective; j--)
+			for (; j >= 0 and not is_effective; j--)
 				is_effective = (ready[j].first == i);
 
 			bool is_deterministic = true;
-			for (int k = 0; k < (int)intersect.size() && is_deterministic; k++)
+			for (int k = 0; k < (int)intersect.size() and is_deterministic; k++)
 				is_deterministic = not base->places[tokens[intersect[k]].index].arbiter;
 
-			if (is_effective && is_deterministic && loaded[i].index != t.index)
+			if (is_effective and is_deterministic and loaded[i].index != t.index)
 			{
 				cout << "Intersect: (";
 				for (int l = 0; l < (int)intersect.size(); l++)
@@ -516,7 +519,7 @@ enabled_transition simulator::fire(int index)
 				cout << ")";
 				mutex err = mutex(t, loaded[i]);
 				vector<mutex>::iterator loc = lower_bound(mutex_errors.begin(), mutex_errors.end(), err);
-				if (loc == mutex_errors.end() || *loc != err)
+				if (loc == mutex_errors.end() or *loc != err)
 				{
 					mutex_errors.insert(loc, err);
 					error("", err.to_string(*base, *variables), __FILE__, __LINE__);
@@ -530,7 +533,7 @@ enabled_transition simulator::fire(int index)
 	ready.clear();
 
 	// take the set symmetric difference, but leave the two sets separate.
-	for (int j = 0, k = 0; j < (int)t.tokens.size() && k < (int)t.output_marking.size(); ) {
+	for (int j = 0, k = 0; j < (int)t.tokens.size() and k < (int)t.output_marking.size(); ) {
 		if (t.tokens[j] == t.output_marking[k]) {
 			t.tokens.erase(t.tokens.begin() + j);
 			t.output_marking.erase(t.output_marking.begin() + k);
@@ -545,7 +548,7 @@ enabled_transition simulator::fire(int index)
 	if (not t.stable and not t.vacuous) {
 		instability err = instability(t);
 		vector<instability>::iterator loc = lower_bound(instability_errors.begin(), instability_errors.end(), err);
-		if (loc == instability_errors.end() || *loc != err) {
+		if (loc == instability_errors.end() or *loc != err) {
 			instability_errors.insert(loc, err);
 			error("", err.to_string(*base, *variables), __FILE__, __LINE__);
 		}
@@ -581,7 +584,7 @@ enabled_transition simulator::fire(int index)
 		{
 			interference err(term_index(t.index, term), t.history[j]);
 			vector<interference>::iterator loc = lower_bound(interference_errors.begin(), interference_errors.end(), err);
-			if (loc == interference_errors.end() || *loc != err)
+			if (loc == interference_errors.end() or *loc != err)
 			{
 				interference_errors.insert(loc, err);
 				error("", err.to_string(*base, *variables), __FILE__, __LINE__);

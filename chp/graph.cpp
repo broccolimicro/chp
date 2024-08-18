@@ -11,6 +11,8 @@
 
 #include <chp/simulator.h>
 
+#include <interpret_arithmetic/export.h>
+
 namespace chp
 {
 
@@ -39,6 +41,7 @@ place place::merge(int composition, const place &p0, const place &p1)
 
 transition::transition()
 {
+	guard = true;
 	action.terms.push_back(arithmetic::parallel());
 }
 
@@ -69,7 +72,7 @@ transition::~transition()
 transition transition::merge(int composition, const transition &t0, const transition &t1)
 {
 	transition result;
-	if (composition == petri::parallel || composition == petri::sequence)
+	if (composition == petri::parallel or composition == petri::sequence)
 	{
 		for (int i = 0; i < (int)t0.action.terms.size(); i++)
 			for (int j = 0; j < (int)t1.action.terms.size(); j++)
@@ -94,50 +97,12 @@ bool transition::mergeable(int composition, const transition &t0, const transiti
 
 bool transition::is_infeasible()
 {
-	if (action.terms.size() == 0)
-		return true;
-
-	for (int i = 0; i < (int)action.terms.size(); i++)
-	{
-		bool feasible = true;
-		for (int j = 0; j < (int)action.terms[i].actions.size() && feasible; j++)
-			if (action.terms[i].actions[j].expr.is_constant())
-			{
-				arithmetic::value eval = action.terms[i].actions[j].expr.evaluate(arithmetic::state());
-				feasible = (eval.data != arithmetic::value::neutral);
-			}
-
-		if (feasible)
-			return false;
-	}
-
-	return true;
+	return guard.is_null() or action.is_infeasible();
 }
 
 bool transition::is_vacuous()
 {
-	if (action.terms.size() == 0)
-		return false;
-
-	for (int i = 0; i < (int)action.terms.size(); i++)
-	{
-		bool vacuous = true;
-		for (int j = 0; j < (int)action.terms[i].actions.size() && vacuous; j++)
-		{
-			if (action.terms[i].actions[j].variable < 0 && action.terms[i].actions[j].channel < 0 && action.terms[i].actions[j].expr.is_constant())
-			{
-				arithmetic::value eval = action.terms[i].actions[j].expr.evaluate(arithmetic::state());
-				vacuous = (eval.data != arithmetic::value::neutral);
-			}
-			else
-				vacuous = false;
-		}
-
-		if (vacuous)
-			return true;
-	}
-
-	return false;
+	return guard.is_constant() and action.is_vacuous();
 }
 
 graph::graph()
@@ -163,6 +128,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 	while (change)
 	{
 		super::reduce(proper_nesting, aggressive);
+		change = false;
 
 		for (int i = 0; i < (int)source.size(); i++)
 		{
@@ -173,7 +139,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 			for (int j = 0; j < (int)sim.ready.size() and not change; j++)
 			{
 				bool firable = transitions[sim.ready[j].index].action.terms.size() <= 1;
-				for (int k = 0; k < (int)sim.ready[j].tokens.size() && firable; k++)
+				for (int k = 0; k < (int)sim.ready[j].tokens.size() and firable; k++)
 				{
 					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++)
 						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index)
@@ -195,13 +161,13 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 
 						arithmetic::state guard_action;
 						int pass = passes_guard(source[idx].encodings, source[idx].encodings, transitions[t.index].guard, &guard_action);
-						source[idx].encodings &= guard_action;
+						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
+						//source[idx].encodings &= guard_action;
 
 						arithmetic::state local = transitions[t.index].action.terms[k].evaluate(source[idx].encodings);
 						arithmetic::state remote = local.remote(variables.get_groups());
 
-						source[idx].encodings = local_assign(source[idx].encodings, local, true);
-						source[idx].encodings = remote_assign(source[idx].encodings, remote, true);
+						source[idx].encodings = local_assign(source[idx].encodings, remote, true);
 					}
 
 					change = true;
@@ -215,10 +181,10 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 			sim.enabled();
 
 			change = false;
-			for (int j = 0; j < (int)sim.ready.size() && !change; j++)
+			for (int j = 0; j < (int)sim.ready.size() and !change; j++)
 			{
 				bool firable = transitions[sim.ready[j].index].action.terms.size() <= 1;
-				for (int k = 0; k < (int)sim.ready[j].tokens.size() && firable; k++)
+				for (int k = 0; k < (int)sim.ready[j].tokens.size() and firable; k++)
 				{
 					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++)
 						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index)
@@ -240,13 +206,13 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 
 						arithmetic::state guard_action;
 						int pass = passes_guard(reset[idx].encodings, reset[idx].encodings, transitions[t.index].guard, &guard_action);
-						reset[idx].encodings &= guard_action;
+						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
+						// reset[idx].encodings &= guard_action;
 
 						arithmetic::state local = transitions[t.index].action.terms[k].evaluate(reset[idx].encodings);
 						arithmetic::state remote = local.remote(variables.get_groups());
 
-						reset[idx].encodings = local_assign(reset[idx].encodings, local, true);
-						reset[idx].encodings = remote_assign(reset[idx].encodings, remote, true);
+						reset[idx].encodings = local_assign(reset[idx].encodings, remote, true);
 					}
 
 					change = true;
@@ -261,8 +227,8 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 
 		// Remove skips
 		change = false;
-		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() && !change; i++) {
-			if (transitions[i.index].action.is_tautology()) {
+		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and !change; i++) {
+			if (transitions[i.index].is_vacuous()) {
 				vector<petri::iterator> n = next(i); // places
 				if (n.size() > 1) {
 					vector<petri::iterator> p = prev(i); // places
@@ -302,18 +268,18 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 		// transition on each branch and move the merge down the sequence). This
 		// allows us to merge that guard at the end of the conditional branch into
 		// the transition.
-		for (petri::iterator i(place::type, 0); i < (int)places.size() && !change; i++) {
+		/*for (petri::iterator i(place::type, 0); i < (int)places.size() and !change; i++) {
 			vector<petri::iterator> p = prev(i);
 			vector<petri::iterator> active, passive;
 			for (int k = 0; k < (int)p.size(); k++) {
-				if (transitions[p[k].index].action.is_tautology()) {
+				if (transitions[p[k].index].action.is_passive()) {
 					passive.push_back(p[k]);
 				} else {
 					active.push_back(p[k]);
 				}
 			}
 
-			if (passive.size() > 1 || (passive.size() == 1 && active.size() > 0)) {
+			if (passive.size() > 1 or (passive.size() == 1 and active.size() > 0)) {
 				vector<petri::iterator> copies;
 				if ((int)active.size() == 0) {
 					copies.push_back(i);
@@ -357,8 +323,8 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 		if (change)
 			continue;
 
-		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() && !change; i++) {
-			if (transitions[i.index].action.is_tautology()) {
+		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and !change; i++) {
+			if (transitions[i.index].action.is_passive()) {
 				vector<petri::iterator> nn = next(next(i)); // transitions
 				for (int l = 0; l < (int)nn.size(); l++) {
 					transitions[nn[l].index] = transition::merge(petri::sequence, transitions[i.index], transitions[nn[l].index]);
@@ -369,7 +335,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 			}
 		}
 		if (change)
-			continue;
+			continue;*/
 	}
 
 	// Determine the actual starting location of the tokens given the state information
@@ -476,7 +442,7 @@ arithmetic::expression graph::exclusion(int index) const {
 		if (n.size() > 1) {
 			for (int j = 0; j < (int)n.size(); j++) {
 				if (n[j] != index) {
-					result = result || transitions[n[j]].guard;
+					result = result | transitions[n[j]].guard;
 				}
 			}
 		}
