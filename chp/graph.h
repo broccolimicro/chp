@@ -57,6 +57,8 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	graph();
 	~graph();
 
+	string name;
+
 	chp::transition &at(term_index idx);
 	arithmetic::parallel &term(term_index idx);
 
