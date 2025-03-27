@@ -39,6 +39,10 @@ place place::merge(int composition, const place &p0, const place &p1)
 	return result;
 }
 
+ostream &operator<<(ostream &os, const place &p) {
+	return os;
+}
+
 transition::transition()
 {
 	guard = true;
@@ -103,6 +107,11 @@ bool transition::is_infeasible()
 bool transition::is_vacuous()
 {
 	return guard.is_constant() and action.is_vacuous();
+}
+
+ostream &operator<<(ostream &os, const transition &t) {
+	os << t.guard << "->" << t.action;
+	return os;
 }
 
 graph::graph()

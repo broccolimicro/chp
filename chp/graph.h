@@ -32,6 +32,8 @@ struct place : petri::place
 	static place merge(int composition, const place &p0, const place &p1);
 };
 
+ostream &operator<<(ostream &os, const place &p);
+
 struct transition : petri::transition
 {
 	transition();
@@ -49,6 +51,8 @@ struct transition : petri::transition
 	bool is_infeasible();
 	bool is_vacuous();
 };
+
+ostream &operator<<(ostream &os, const transition &t);
 
 struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
 {
