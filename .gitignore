@@ -1,5 +1,6 @@
 *.o
-*.d
 *.a
 *.so
-test_chp
+build
+test
+coverage*

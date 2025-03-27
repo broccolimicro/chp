@@ -169,7 +169,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 						}
 
 						arithmetic::state guard_action;
-						int pass = passes_guard(source[idx].encodings, source[idx].encodings, transitions[t.index].guard, &guard_action);
+						passes_guard(source[idx].encodings, source[idx].encodings, transitions[t.index].guard, &guard_action);
 						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
 						//source[idx].encodings &= guard_action;
 
@@ -214,7 +214,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 						}
 
 						arithmetic::state guard_action;
-						int pass = passes_guard(reset[idx].encodings, reset[idx].encodings, transitions[t.index].guard, &guard_action);
+						passes_guard(reset[idx].encodings, reset[idx].encodings, transitions[t.index].guard, &guard_action);
 						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
 						// reset[idx].encodings &= guard_action;
 
