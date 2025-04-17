@@ -107,7 +107,7 @@ deadlock::deadlock(const state &s) : state(s)
 
 }
 
-deadlock::deadlock(vector<token> tokens, arithmetic::state encodings) : state(tokens, encodings)
+deadlock::deadlock(vector<token> tokens, arithmetic::State encodings) : state(tokens, encodings)
 {
 
 }
@@ -327,7 +327,7 @@ int simulator::enabled(bool sorted) {
 			// a false-positive for instabilities. So we need to remove the terms in
 			// the propagated guard that have already been acknowledged by other
 			// transitions acknowledged by the base guard and the sequencing.
-			arithmetic::expression guard = preload[i].depend & preload[i].guard;
+			arithmetic::Expression guard = preload[i].depend & preload[i].guard;
 
 			// Check for unstable transitions
 			bool previously_enabled = false;
@@ -339,7 +339,7 @@ int simulator::enabled(bool sorted) {
 			}
 
 			// Now we check to see if the current state passes the guard
-			int isReady = arithmetic::passes_guard(encoding, global, guard, &preload[i].guard_action);
+			int isReady = arithmetic::passesGuard(encoding, global, guard, &preload[i].guard_action);
 
 			if (isReady < 0 and previously_enabled) {
 				isReady = 0;
@@ -349,7 +349,7 @@ int simulator::enabled(bool sorted) {
 			preload[i].remote_action = preload[i].local_action.remote(variables->get_groups());
 
 			preload[i].stable = (isReady > 0);
-			preload[i].vacuous = arithmetic::vacuous_assign(global, preload[i].remote_action, preload[i].stable);
+			preload[i].vacuous = arithmetic::vacuousAssign(global, preload[i].remote_action, preload[i].stable);
 			preload[i].stable = preload[i].stable or preload[i].vacuous;
 
 			// if the transition is vacuous, then we've already passed the guard even
@@ -377,8 +377,8 @@ int simulator::enabled(bool sorted) {
 					}
 					preload.erase(preload.begin() + i);
 				} else {
-					arithmetic::expression guard = preload[i].depend;
-					if (preload[i].local_action.is_tautology()) {
+					arithmetic::Expression guard = preload[i].depend;
+					if (preload[i].local_action.isTautology()) {
 						guard = guard & preload[i].guard;
 					} else {
 						// the guard should be the most minimal possible guard necessary to
@@ -386,8 +386,8 @@ int simulator::enabled(bool sorted) {
 						// transition is a skip, in which case any guard should be passed
 						// on to the next transition). If there isn't a multi-term
 						// selection statement, then the guard should be ignored.
-						arithmetic::expression exclude = base->exclusion(preload[i].index);
-						arithmetic::expression weak = arithmetic::weakest_guard(preload[i].guard, exclude);
+						arithmetic::Expression exclude = base->exclusion(preload[i].index);
+						arithmetic::Expression weak = arithmetic::weakestGuard(preload[i].guard, exclude);
 						guard = guard & weak;
 						//cout << "setting token guard:" << export_expression(base->transitions[preload[i].index].guard, *variables).to_string() << " exclude:" << export_expression(exclude, *variables).to_string() << " weak:" << export_expression(weak, *variables).to_string() << " result:" << export_expression(guard, *variables).to_string() << endl;
 					}
@@ -422,7 +422,7 @@ int simulator::enabled(bool sorted) {
 		vector<int> output = base->next(transition::type, potential[i].index);
 		for (int j = 0; j < (int)output.size(); j++) {
 			potential[i].output_marking.push_back((int)tokens.size());
-			tokens.push_back(token(output[j], true, preload.size()));
+			tokens.push_back(token(output[j], arithmetic::Operand(true), preload.size()));
 		}
 
 		preload.push_back(potential[i]);
@@ -579,8 +579,8 @@ enabled_transition simulator::fire(int index)
 	// Check for interfering transitions. Interfering transitions are the active
 	// transitions that have fired since this active transition was enabled.
 	for (int j = 0; j < (int)t.history.size(); j++) {
-		arithmetic::state historical_action = base->term(t.history[j]).evaluate(encoding).remote(variables->get_groups());
-		if (arithmetic::are_interfering(t.remote_action[term], historical_action))
+		arithmetic::State historical_action = base->term(t.history[j]).evaluate(encoding).remote(variables->get_groups());
+		if (arithmetic::areInterfering(t.remote_action[term], historical_action))
 		{
 			interference err(term_index(t.index, term), t.history[j]);
 			vector<interference>::iterator loc = lower_bound(interference_errors.begin(), interference_errors.end(), err);
@@ -596,19 +596,19 @@ enabled_transition simulator::fire(int index)
 	}
 
 	// Update the state
-	global = local_assign(global, t.remote_action[term], t.stable);
-	encoding = remote_assign(local_assign(encoding, t.local_action[term], t.stable), global, true);
+	global = localAssign(global, t.remote_action[term], t.stable);
+	encoding = remoteAssign(localAssign(encoding, t.local_action[term], t.stable), global, true);
 
 	// Update the history. The first thing we need to do is remove any assignments that no longer
 	// have any effect on the global state. So we remove history items where all of the terms
 	// in their assignments are conflicting with terms in more recent assignments.
-	arithmetic::state m = t.local_action[term].mask();
+	arithmetic::State m = t.local_action[term].mask();
 	for (list<firing>::reverse_iterator i = history.rbegin(); i != history.rend();) {
-		if (i->local_action.mask(m).is_tautology()) {
+		if (i->local_action.mask(m).isTautology()) {
 			i++;
 			i = list<firing>::reverse_iterator(history.erase(i.base()));
 		} else {
-			m = m.combine_mask(i->local_action.mask());
+			m = m.combineMask(i->local_action.mask());
 			i++;
 		}
 	}

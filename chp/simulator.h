@@ -60,7 +60,7 @@ struct deadlock : state
 {
 	deadlock();
 	deadlock(const state &s);
-	deadlock(vector<token> tokens, arithmetic::state encodings);
+	deadlock(vector<token> tokens, arithmetic::State encodings);
 	~deadlock();
 
 	string to_string(const ucs::variable_set &v);
@@ -143,8 +143,8 @@ struct simulator
 	
 	// See haystack/lib/arithmetic/arithmetic/{state.h, state.cpp} for more
 	// details about the minterm representation.
-	arithmetic::state encoding;
-	arithmetic::state global;
+	arithmetic::State encoding;
+	arithmetic::State global;
 
 	// These are the tokens that mark the current state. Effectively, these are
 	// the program counters. While Petri Nets technically allow more than one

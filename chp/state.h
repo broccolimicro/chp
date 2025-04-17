@@ -65,16 +65,16 @@ struct enabled_transition : petri::enabled_transition
 	// The intersection of all of the terms of the guard of this transition which
 	// the current state passed. This is ANDed into the current state to fill in
 	// missing information.
-	arithmetic::state guard_action;
-	arithmetic::region local_action;
-	arithmetic::region remote_action;
+	arithmetic::State guard_action;
+	arithmetic::Region local_action;
+	arithmetic::Region remote_action;
 
 	// The effective guard of this enabled transition.
-	arithmetic::expression guard;
+	arithmetic::Expression guard;
 
 	// The collection of all the guards through vacuous transitions leading to
 	// this transition.
-	arithmetic::expression depend;
+	arithmetic::Expression depend;
 
 	// An enabled transition is vacuous if the assignment would leave the current
 	// state encoding unaffected.
@@ -98,9 +98,9 @@ struct firing {
 	firing(const enabled_transition &t, int i);
 	~firing();
 
-	arithmetic::state guard_action;
-	arithmetic::state local_action;
-	arithmetic::state remote_action;
+	arithmetic::State guard_action;
+	arithmetic::State local_action;
+	arithmetic::State remote_action;
 	term_index index;
 };
 
@@ -111,14 +111,14 @@ struct token : petri::token
 {
 	token();
 	token(petri::token t);
-	token(int index, arithmetic::expression guard, int cause=-1);
+	token(int index, arithmetic::Expression guard, int cause=-1);
 	~token();
 
 	// The current place this token resides at.
 	// inherited from petri::token
 	// int index
 
-	arithmetic::expression guard;
+	arithmetic::Expression guard;
 
 	int cause;
 
@@ -132,8 +132,8 @@ struct token : petri::token
 struct state : petri::state<petri::token>
 {
 	state();
-	state(vector<petri::token> tokens, arithmetic::state encodings);
-	state(vector<chp::token> tokens, arithmetic::state encodings);
+	state(vector<petri::token> tokens, arithmetic::State encodings);
+	state(vector<chp::token> tokens, arithmetic::State encodings);
 	~state();
 
 	// The tokens marking our location in the HSE
@@ -141,7 +141,7 @@ struct state : petri::state<petri::token>
 	// vector<token> tokens;
 
 	// The current value assiged to each variable.
-	arithmetic::state encodings;
+	arithmetic::State encodings;
 
 	void hash(hasher &hash) const;
 

@@ -37,13 +37,13 @@ ostream &operator<<(ostream &os, const place &p);
 struct transition : petri::transition
 {
 	transition();
-	transition(arithmetic::expression guard, arithmetic::action assign);
-	transition(arithmetic::expression guard, arithmetic::parallel assign);
-	transition(arithmetic::expression guard, arithmetic::choice assign);
+	transition(arithmetic::Expression guard, arithmetic::Action assign);
+	transition(arithmetic::Expression guard, arithmetic::Parallel assign);
+	transition(arithmetic::Expression guard, arithmetic::Choice assign);
 	~transition();
 
-	arithmetic::expression guard;
-	arithmetic::choice action;
+	arithmetic::Expression guard;
+	arithmetic::Choice action;
 
 	static transition merge(int composition, const transition &t0, const transition &t1);
 	static bool mergeable(int composition, const transition &t0, const transition &t1);
@@ -64,12 +64,12 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	string name;
 
 	chp::transition &at(term_index idx);
-	arithmetic::parallel &term(term_index idx);
+	arithmetic::Parallel &term(term_index idx);
 
 	void post_process(const ucs::variable_set &variables, bool proper_nesting = false, bool aggressive = false);
 	void decompose(const ucs::variable_set &variables);
 	void expand(const ucs::variable_set &variables);
-	arithmetic::expression exclusion(int index) const;
+	arithmetic::Expression exclusion(int index) const;
 };
 
 }

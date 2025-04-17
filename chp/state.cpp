@@ -177,7 +177,7 @@ token::token(petri::token t)
 	cause = -1;
 }
 
-token::token(int index, arithmetic::expression guard, int cause)
+token::token(int index, arithmetic::Expression guard, int cause)
 {
 	this->index = index;
 	this->guard = guard;
@@ -198,13 +198,13 @@ state::state()
 {
 }
 
-state::state(vector<petri::token> tokens, arithmetic::state encodings)
+state::state(vector<petri::token> tokens, arithmetic::State encodings)
 {
 	this->tokens = tokens;
 	this->encodings = encodings;
 }
 
-state::state(vector<chp::token> tokens, arithmetic::state encodings)
+state::state(vector<chp::token> tokens, arithmetic::State encodings)
 {
 	for (int i = 0; i < (int)tokens.size(); i++)
 		this->tokens.push_back(tokens[i]);
@@ -265,7 +265,7 @@ state state::convert(map<petri::iterator, vector<petri::iterator> > translate) c
 
 bool state::is_subset_of(const state &s)
 {
-	return (tokens == s.tokens and encodings.is_subset_of(s.encodings));
+	return (tokens == s.tokens and encodings.isSubsetOf(s.encodings));
 }
 
 string state::to_string(const ucs::variable_set &variables)

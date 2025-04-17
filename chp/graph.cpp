@@ -46,23 +46,23 @@ ostream &operator<<(ostream &os, const place &p) {
 transition::transition()
 {
 	guard = true;
-	action.terms.push_back(arithmetic::parallel());
+	action.terms.push_back(arithmetic::Parallel());
 }
 
-transition::transition(arithmetic::expression guard, arithmetic::action assign)
+transition::transition(arithmetic::Expression guard, arithmetic::Action assign)
 {
 	this->guard = guard;
-	this->action.terms.push_back(arithmetic::parallel());
+	this->action.terms.push_back(arithmetic::Parallel());
 	this->action.terms.back().actions.push_back(assign);
 }
 
-transition::transition(arithmetic::expression guard, arithmetic::parallel assign)
+transition::transition(arithmetic::Expression guard, arithmetic::Parallel assign)
 {
 	this->guard = guard;
 	this->action.terms.push_back(assign);
 }
 
-transition::transition(arithmetic::expression guard, arithmetic::choice assign)
+transition::transition(arithmetic::Expression guard, arithmetic::Choice assign)
 {
 	this->guard = guard;
 	this->action = assign;
@@ -81,7 +81,7 @@ transition transition::merge(int composition, const transition &t0, const transi
 		for (int i = 0; i < (int)t0.action.terms.size(); i++)
 			for (int j = 0; j < (int)t1.action.terms.size(); j++)
 			{
-				result.action.terms.push_back(arithmetic::parallel());
+				result.action.terms.push_back(arithmetic::Parallel());
 				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t0.action.terms[i].actions.begin(), t0.action.terms[i].actions.end());
 				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t1.action.terms[j].actions.begin(), t1.action.terms[j].actions.end());
 			}
@@ -101,12 +101,12 @@ bool transition::mergeable(int composition, const transition &t0, const transiti
 
 bool transition::is_infeasible()
 {
-	return guard.is_null() or action.is_infeasible();
+	return guard.isNull() or action.isInfeasible();
 }
 
 bool transition::is_vacuous()
 {
-	return guard.is_constant() and action.is_vacuous();
+	return guard.isConstant() and action.isVacuous();
 }
 
 ostream &operator<<(ostream &os, const transition &t) {
@@ -127,7 +127,7 @@ chp::transition &graph::at(term_index idx) {
 	return transitions[idx.index];
 }
 
-arithmetic::parallel &graph::term(term_index idx) {
+arithmetic::Parallel &graph::term(term_index idx) {
 	return transitions[idx.index].action.terms[idx.term];
 }
 
@@ -168,15 +168,15 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 							source.push_back(source[i]);
 						}
 
-						arithmetic::state guard_action;
-						passes_guard(source[idx].encodings, source[idx].encodings, transitions[t.index].guard, &guard_action);
+						arithmetic::State guard_action;
+						passesGuard(source[idx].encodings, source[idx].encodings, transitions[t.index].guard, &guard_action);
 						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
 						//source[idx].encodings &= guard_action;
 
-						arithmetic::state local = transitions[t.index].action.terms[k].evaluate(source[idx].encodings);
-						arithmetic::state remote = local.remote(variables.get_groups());
+						arithmetic::State local = transitions[t.index].action.terms[k].evaluate(source[idx].encodings);
+						arithmetic::State remote = local.remote(variables.get_groups());
 
-						source[idx].encodings = local_assign(source[idx].encodings, remote, true);
+						source[idx].encodings = localAssign(source[idx].encodings, remote, true);
 					}
 
 					change = true;
@@ -213,15 +213,15 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 							reset.push_back(reset[i]);
 						}
 
-						arithmetic::state guard_action;
-						passes_guard(reset[idx].encodings, reset[idx].encodings, transitions[t.index].guard, &guard_action);
+						arithmetic::State guard_action;
+						passesGuard(reset[idx].encodings, reset[idx].encodings, transitions[t.index].guard, &guard_action);
 						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
 						// reset[idx].encodings &= guard_action;
 
-						arithmetic::state local = transitions[t.index].action.terms[k].evaluate(reset[idx].encodings);
-						arithmetic::state remote = local.remote(variables.get_groups());
+						arithmetic::State local = transitions[t.index].action.terms[k].evaluate(reset[idx].encodings);
+						arithmetic::State remote = local.remote(variables.get_groups());
 
-						reset[idx].encodings = local_assign(reset[idx].encodings, remote, true);
+						reset[idx].encodings = localAssign(reset[idx].encodings, remote, true);
 					}
 
 					change = true;
@@ -442,8 +442,8 @@ void expand(const ucs::variable_set &variables) {
 	// 3. Document as needed
 }
 
-arithmetic::expression graph::exclusion(int index) const {
-	arithmetic::expression result;
+arithmetic::Expression graph::exclusion(int index) const {
+	arithmetic::Expression result;
 	vector<int> p = prev(transition::type, index);
 	
 	for (int i = 0; i < (int)p.size(); i++) {
