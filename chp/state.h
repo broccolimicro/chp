@@ -5,7 +5,6 @@
 #include <arithmetic/expression.h>
 #include <petri/state.h>
 #include <petri/graph.h>
-#include <ucs/variable.h>
 
 namespace chp
 {
@@ -27,7 +26,7 @@ struct term_index
 
 	void hash(hasher &hash) const;
 
-	string to_string(const graph &g, const ucs::variable_set &v);
+	string to_string(const graph &g);
 };
 
 bool operator<(term_index i, term_index j);
@@ -84,7 +83,7 @@ struct enabled_transition : petri::enabled_transition
 	// passes the guard.
 	bool stable;
 
-	string to_string(const graph &g, const ucs::variable_set &v);
+	string to_string(const graph &g);
 };
 
 bool operator<(enabled_transition i, enabled_transition j);
@@ -149,7 +148,7 @@ struct state : petri::state<petri::token>
 	static state collapse(int index, const state &s);
 	state convert(map<petri::iterator, vector<petri::iterator> > translate) const;
 	bool is_subset_of(const state &s);
-	string to_string(const ucs::variable_set &variables);
+	string to_string(const graph &g);
 };
 
 ostream &operator<<(ostream &os, state s);

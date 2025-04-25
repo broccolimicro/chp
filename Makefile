@@ -1,6 +1,6 @@
 NAME          = chp
-DEPEND        = ucs petri arithmetic common interpret_arithmetic interpret_ucs parse_expression parse_ucs parse
-TEST_DEPEND   = ucs petri arithmetic common interpret_arithmetic interpret_ucs parse_expression parse_ucs parse
+DEPEND        = petri flow arithmetic common interpret_arithmetic parse_expression parse_ucs parse
+TEST_DEPEND   = petri flow arithmetic common interpret_arithmetic parse_expression parse_ucs parse
 
 COVERAGE ?= 0
 

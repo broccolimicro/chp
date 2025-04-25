@@ -1,13 +1,7 @@
-/*
- * graph.cpp
- *
- *  Created on: Feb 2, 2015
- *      Author: nbingham
- */
-
 #include "graph.h"
 #include <common/message.h>
 #include <common/text.h>
+#include <common/mapping.h>
 
 #include <chp/simulator.h>
 
@@ -114,6 +108,18 @@ ostream &operator<<(ostream &os, const transition &t) {
 	return os;
 }
 
+variable::variable() {
+	region = 0;
+}
+
+variable::variable(string name, int region) {
+	this->name = name;
+	this->region = region;
+}
+
+variable::~variable() {
+}
+
 graph::graph()
 {
 }
@@ -121,6 +127,136 @@ graph::graph()
 graph::~graph()
 {
 
+}
+
+/**
+ * @brief Find the index of a net with the given name and region
+ * 
+ * Searches for a net by exact name and region match.
+ * 
+ * @param name The name of the net to find
+ * @param region The region to search in
+ * @return The index of the net if found, -1 otherwise
+ */
+int graph::netIndex(string name, int region) const {
+	for (int i = 0; i < (int)vars.size(); i++) {
+		if (vars[i].name == name and vars[i].region == region) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+/**
+ * @brief Find or create a net with the given name and region
+ * 
+ * First tries to find an exact match for the net. If not found and define is true
+ * or vars with the same name exist in other regions, creates a new net and connects
+ * it to other vars with the same name.
+ * 
+ * @param name The name of the net to find or create
+ * @param region The region for the net
+ * @param define Whether to create the net if not found
+ * @return The index of the found or created net, or -1 if not found and not created
+ */
+int graph::netIndex(string name, int region, bool define) {
+	vector<int> remote;
+	// First try to find the exact net
+	for (int i = 0; i < (int)vars.size(); i++) {
+		if (vars[i].name == name) {
+			remote.push_back(i);
+			if (vars[i].region == region) {
+				return i;
+			}
+		}
+	}
+
+	// If not found but define is true or we found vars with the same
+	// name, create a new net and connect it to the other vars with the
+	// same name
+	if (define or not remote.empty()) {
+		int uid = create(variable(name, region));
+		for (int i = 0; i < (int)remote.size(); i++) {
+			connect_remote(uid, remote[i]);
+		}
+		return uid;
+	}
+	return -1;
+}
+
+/**
+ * @brief Get the name and region of a net by index
+ * 
+ * @param uid The index of the net
+ * @return A pair containing the name and region of the net
+ */
+pair<string, int> graph::netAt(int uid) const {
+	if (uid >= (int)vars.size()) {
+		return pair<string, int>("", 0);
+	}
+	return pair<string, int>(vars[uid].name, vars[uid].region);
+}
+
+int graph::netCount() const {
+	return (int)vars.size();
+}
+
+/**
+ * @brief Create a new net in the graph
+ * 
+ * Adds a new net to the graph and initializes its remote connections.
+ * If the net is a ghost net, adds it to the ghost_vars list.
+ * 
+ * @param n The net to create
+ * @return The index of the newly created net
+ */
+int graph::create(variable n) {
+	int uid = vars.size();
+	vars.push_back(n);
+	vars.back().remote.push_back(uid);
+	return uid;
+}
+
+/**
+ * @brief Connect two vars as remote counterparts
+ * 
+ * Establishes a remote connection between two vars, making them share
+ * the same remote list. This is used to connect vars with the same name
+ * across different regions.
+ * 
+ * @param from Index of the first net
+ * @param to Index of the second net
+ */
+void graph::connect_remote(int from, int to) {
+	vars[from].remote.insert(vars[from].remote.end(), vars[to].remote.begin(), vars[to].remote.end());
+	sort(vars[from].remote.begin(), vars[from].remote.end());
+	vars[from].remote.erase(unique(vars[from].remote.begin(), vars[from].remote.end()), vars[from].remote.end());
+	vars[to].remote = vars[from].remote;
+}
+
+
+/**
+ * @brief Get all remote net groups
+ * 
+ * A remote group collects all of the isochronic regions of a net. It is a set of vars that are connected
+ * to each other via remote connections. This function identifies all distinct remote groups in the graph.
+ * 
+ * @return A vector of vectors, where each inner vector contains the indices of vars in one remote group
+ */
+vector<vector<int> > graph::remote_groups() {
+	vector<vector<int> > groups;
+
+	for (int i = 0; i < (int)vars.size(); i++) {
+		bool found = false;
+		for (int j = 0; j < (int)groups.size() and not found; j++) {
+			found = (find(groups[j].begin(), groups[j].end(), i) != groups[j].end());
+		}
+		if (not found) {
+			groups.push_back(vars[i].remote);
+		}
+	}
+
+	return groups;
 }
 
 chp::transition &graph::at(term_index idx) {
@@ -131,7 +267,50 @@ arithmetic::Parallel &graph::term(term_index idx) {
 	return transitions[idx.index].action.terms[idx.term];
 }
 
-void graph::post_process(const ucs::variable_set &variables, bool proper_nesting, bool aggressive) {
+map<petri::iterator, vector<petri::iterator> > graph::merge(int composition, graph g) {
+	mapping netMap((int)g.vars.size());
+
+	// Add all of the vars and look for duplicates
+	int count = (int)vars.size();
+	for (int i = 0; i < (int)g.vars.size(); i++) {
+		netMap.nets[i] = (int)vars.size();
+		vector<int> remote;
+		for (int j = 0; j < count; j++) {
+			if (vars[j].name == g.vars[i].name) {
+				if (vars[j].region == g.vars[i].region) {
+					netMap.nets[i] = j;
+				}
+				remote.push_back(j);
+			}
+		}
+
+		if (netMap.nets[i] >= (int)vars.size()) {
+			vars.push_back(g.vars[i]);
+			vars.back().remote = remote;
+		}
+	}
+
+	// Fill in the remote vars
+	for (int i = 0; i < (int)netMap.nets.size(); i++) {
+		int k = netMap.nets[i];
+		for (int j = 0; j < (int)g.vars[i].remote.size(); j++) {
+			vars[k].remote.push_back(netMap.map(g.vars[i].remote[j]));
+		}
+		sort(vars[k].remote.begin(), vars[k].remote.end());
+		vars[k].remote.erase(unique(vars[k].remote.begin(), vars[k].remote.end()), vars[k].remote.end());
+	}
+
+	for (int i = 0; i < (int)g.transitions.size(); i++) {
+		g.transitions[i].action.apply(netMap);
+		g.transitions[i].guard.apply(netMap);
+	}
+
+	// Remap all expressions to new vars
+	return super::merge(composition, g);
+}
+
+
+void graph::post_process(bool proper_nesting, bool aggressive) {
 	// Handle Reset Behavior
 	bool change = true;
 	while (change)
@@ -174,7 +353,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 						//source[idx].encodings &= guard_action;
 
 						arithmetic::State local = transitions[t.index].action.terms[k].evaluate(source[idx].encodings);
-						arithmetic::State remote = local.remote(variables.get_groups());
+						arithmetic::State remote = local.remote(remote_groups());
 
 						source[idx].encodings = localAssign(source[idx].encodings, remote, true);
 					}
@@ -219,7 +398,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 						// reset[idx].encodings &= guard_action;
 
 						arithmetic::State local = transitions[t.index].action.terms[k].evaluate(reset[idx].encodings);
-						arithmetic::State remote = local.remote(variables.get_groups());
+						arithmetic::State remote = local.remote(remote_groups());
 
 						reset[idx].encodings = localAssign(reset[idx].encodings, remote, true);
 					}
@@ -352,7 +531,7 @@ void graph::post_process(const ucs::variable_set &variables, bool proper_nesting
 		reset = source;
 }
 
-void graph::decompose(const ucs::variable_set &variables) {
+void graph::decompose() {
 	// TODO Process Decomposition and Projection
 	//
 	// The goal of this project is to break up a large sequential process into
@@ -397,7 +576,7 @@ void graph::decompose(const ucs::variable_set &variables) {
 	// 3. Document as needed
 }
 
-void expand(const ucs::variable_set &variables) {
+void expand() {
 	// TODO Handshake Expansion and Reshuffling
 	//
 	// The goal of this project is given a CHP circuit specification, break that

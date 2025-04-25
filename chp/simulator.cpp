@@ -2,7 +2,6 @@
 #include "graph.h"
 #include <common/text.h>
 #include <common/message.h>
-#include <ucs/variable.h>
 #include <interpret_arithmetic/export.h>
 
 namespace chp
@@ -21,10 +20,10 @@ instability::~instability()
 
 }
 
-string instability::to_string(const chp::graph &g, const ucs::variable_set &v)
+string instability::to_string(const chp::graph &g)
 {
 	string result;
-	result = "unstable rule " + enabled_transition::to_string(g, v);
+	result = "unstable rule " + enabled_transition::to_string(g);
 
 	result += " cause: {";
 
@@ -33,7 +32,7 @@ string instability::to_string(const chp::graph &g, const ucs::variable_set &v)
 		if (j != 0)
 			result += "; ";
 
-		result += history[j].to_string(g, v);
+		result += history[j].to_string(g);
 	}
 	result += "}";
 	return result;
@@ -63,9 +62,9 @@ interference::~interference()
 
 }
 
-string interference::to_string(const chp::graph &g, const ucs::variable_set &v)
+string interference::to_string(const chp::graph &g)
 {
-	return "interfering assignments " + first.to_string(g, v) + " and " + second.to_string(g, v);
+	return "interfering assignments " + first.to_string(g) + " and " + second.to_string(g);
 }
 
 mutex::mutex()
@@ -92,9 +91,9 @@ mutex::~mutex()
 
 }
 
-string mutex::to_string(const chp::graph &g, const ucs::variable_set &v)
+string mutex::to_string(const chp::graph &g)
 {
-	return "non-exclusive guards in deterministic selection for assignments " + first.to_string(g, v) + " and " + second.to_string(g, v);
+	return "non-exclusive guards in deterministic selection for assignments " + first.to_string(g) + " and " + second.to_string(g);
 }
 
 deadlock::deadlock()
@@ -117,20 +116,18 @@ deadlock::~deadlock()
 
 }
 
-string deadlock::to_string(const ucs::variable_set &v)
+string deadlock::to_string(const graph &g)
 {
-	return "deadlock detected at state " + state::to_string(v);
+	return "deadlock detected at state " + state::to_string(g);
 }
 
 simulator::simulator()
 {
 	base = NULL;
-	variables = NULL;
 }
 
-simulator::simulator(graph *base, const ucs::variable_set *variables, state initial) {
+simulator::simulator(graph *base, state initial) {
 	this->base = base;
-	this->variables = variables;
 	if (base != NULL) {
 		encoding = initial.encodings;
 		global = initial.encodings;
@@ -346,7 +343,7 @@ int simulator::enabled(bool sorted) {
 			}
 
 			preload[i].local_action = base->transitions[preload[i].index].action.evaluate(encoding & preload[i].guard_action);
-			preload[i].remote_action = preload[i].local_action.remote(variables->get_groups());
+			preload[i].remote_action = preload[i].local_action.remote(base->remote_groups());
 
 			preload[i].stable = (isReady > 0);
 			preload[i].vacuous = arithmetic::vacuousAssign(global, preload[i].remote_action, preload[i].stable);
@@ -522,7 +519,7 @@ enabled_transition simulator::fire(int index)
 				if (loc == mutex_errors.end() or *loc != err)
 				{
 					mutex_errors.insert(loc, err);
-					error("", err.to_string(*base, *variables), __FILE__, __LINE__);
+					error("", err.to_string(*base), __FILE__, __LINE__);
 				}
 			}
 
@@ -550,7 +547,7 @@ enabled_transition simulator::fire(int index)
 		vector<instability>::iterator loc = lower_bound(instability_errors.begin(), instability_errors.end(), err);
 		if (loc == instability_errors.end() or *loc != err) {
 			instability_errors.insert(loc, err);
-			error("", err.to_string(*base, *variables), __FILE__, __LINE__);
+			error("", err.to_string(*base), __FILE__, __LINE__);
 		}
 	}
 
@@ -579,7 +576,7 @@ enabled_transition simulator::fire(int index)
 	// Check for interfering transitions. Interfering transitions are the active
 	// transitions that have fired since this active transition was enabled.
 	for (int j = 0; j < (int)t.history.size(); j++) {
-		arithmetic::State historical_action = base->term(t.history[j]).evaluate(encoding).remote(variables->get_groups());
+		arithmetic::State historical_action = base->term(t.history[j]).evaluate(encoding).remote(base->remote_groups());
 		if (arithmetic::areInterfering(t.remote_action[term], historical_action))
 		{
 			interference err(term_index(t.index, term), t.history[j]);
@@ -587,7 +584,7 @@ enabled_transition simulator::fire(int index)
 			if (loc == interference_errors.end() or *loc != err)
 			{
 				interference_errors.insert(loc, err);
-				error("", err.to_string(*base, *variables), __FILE__, __LINE__);
+				error("", err.to_string(*base), __FILE__, __LINE__);
 			}
 		}
 

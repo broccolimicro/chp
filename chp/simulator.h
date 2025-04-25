@@ -1,7 +1,6 @@
 #pragma once
 
 #include <common/standard.h>
-#include <ucs/variable.h>
 #include <petri/state.h>
 #include <petri/simulator.h>
 #include "graph.h"
@@ -20,7 +19,7 @@ struct instability : enabled_transition
 	instability(const enabled_transition &cause);
 	~instability();
 
-	string to_string(const chp::graph &g, const ucs::variable_set &v);
+	string to_string(const chp::graph &g);
 };
 
 // An instability occurs when the pull up and the pull down network of a gate
@@ -33,7 +32,7 @@ struct interference : pair<term_index, term_index>
 	interference(const term_index &first, const term_index &second);
 	~interference();
 
-	string to_string(const chp::graph &g, const ucs::variable_set &v);
+	string to_string(const chp::graph &g);
 };
 
 // A mutex error occurs when multiple output transitions of a non-arbiter place
@@ -48,7 +47,7 @@ struct mutex : pair<enabled_transition, enabled_transition>
 	mutex(const enabled_transition &first, const enabled_transition &second);
 	~mutex();
 
-	string to_string(const chp::graph &g, const ucs::variable_set &v);
+	string to_string(const chp::graph &g);
 };
 
 // A deadlock occurs when we reach a state with no enabled transitions. This
@@ -63,7 +62,7 @@ struct deadlock : state
 	deadlock(vector<token> tokens, arithmetic::State encodings);
 	~deadlock();
 
-	string to_string(const ucs::variable_set &v);
+	string to_string(const chp::graph &g);
 };
 
 // This keeps track of a single simulation of a set of HSE and makes it easy to
@@ -75,7 +74,7 @@ struct simulator
 	typedef petri::simulator<chp::place, chp::transition, petri::token, chp::state> super;
 
 	simulator();
-	simulator(graph *base, const ucs::variable_set *variables, state initial);
+	simulator(graph *base, state initial);
 	~simulator();
 
 	// This simulator is also used for elaboration, so a lot of the errors we
@@ -108,7 +107,6 @@ struct simulator
 	// to every simulation step. graph is the HSE we are simulating, and
 	// variables keeps a mapping from variable name to index in a minterm.
 	graph *base;
-	const ucs::variable_set *variables;
 
 	// The encoding is a minterm that records our knowledge about the current
 	// value of each variable in the circuit.
