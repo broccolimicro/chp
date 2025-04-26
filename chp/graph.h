@@ -64,7 +64,6 @@ struct variable {
 	vector<int> remote;
 };
 
-
 struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
 {
 	typedef petri::graph<chp::place, chp::transition, petri::token, chp::state> super;
