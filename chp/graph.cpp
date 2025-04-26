@@ -112,7 +112,7 @@ variable::variable() {
 	region = 0;
 }
 
-variable::variable(string name, int region) {
+variable::variable(ucs::Net name, int region) {
 	this->name = name;
 	this->region = region;
 }
@@ -138,9 +138,9 @@ graph::~graph()
  * @param region The region to search in
  * @return The index of the net if found, -1 otherwise
  */
-int graph::netIndex(string name, int region) const {
+int graph::netIndex(ucs::Net name) const {
 	for (int i = 0; i < (int)vars.size(); i++) {
-		if (vars[i].name == name and vars[i].region == region) {
+		if (vars[i].name == name) {
 			return i;
 		}
 	}
@@ -159,13 +159,13 @@ int graph::netIndex(string name, int region) const {
  * @param define Whether to create the net if not found
  * @return The index of the found or created net, or -1 if not found and not created
  */
-int graph::netIndex(string name, int region, bool define) {
+int graph::netIndex(ucs::Net name, bool define) {
 	vector<int> remote;
 	// First try to find the exact net
 	for (int i = 0; i < (int)vars.size(); i++) {
-		if (vars[i].name == name) {
+		if (vars[i].name.fields == name.fields) {
 			remote.push_back(i);
-			if (vars[i].region == region) {
+			if (vars[i].name.region == name.region) {
 				return i;
 			}
 		}
@@ -175,7 +175,7 @@ int graph::netIndex(string name, int region, bool define) {
 	// name, create a new net and connect it to the other vars with the
 	// same name
 	if (define or not remote.empty()) {
-		int uid = create(variable(name, region));
+		int uid = create(variable(name));
 		for (int i = 0; i < (int)remote.size(); i++) {
 			connect_remote(uid, remote[i]);
 		}
@@ -190,11 +190,11 @@ int graph::netIndex(string name, int region, bool define) {
  * @param uid The index of the net
  * @return A pair containing the name and region of the net
  */
-pair<string, int> graph::netAt(int uid) const {
+ucs::Net graph::netAt(int uid) const {
 	if (uid >= (int)vars.size()) {
-		return pair<string, int>("", 0);
+		return ucs::Net();
 	}
-	return pair<string, int>(vars[uid].name, vars[uid].region);
+	return vars[uid].name;
 }
 
 int graph::netCount() const {

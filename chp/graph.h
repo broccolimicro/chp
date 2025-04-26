@@ -1,6 +1,7 @@
 #pragma once
 
 #include <common/standard.h>
+#include <common/net.h>
 #include <arithmetic/action.h>
 #include <petri/graph.h>
 
@@ -55,10 +56,10 @@ ostream &operator<<(ostream &os, const transition &t);
 
 struct variable {
 	variable();
-	variable(string name, int region=0);
+	variable(ucs::Net name, int region=0);
 	~variable();
 
-	string name;
+	ucs::Net name;
 	int region;
 
 	vector<int> remote;
@@ -75,9 +76,9 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	vector<variable> vars;
 
-	int netIndex(string name, int region=0) const;
-	int netIndex(string name, int region=0, bool define=false);
-	pair<string, int> netAt(int uid) const;
+	int netIndex(ucs::Net name) const;
+	int netIndex(ucs::Net name, bool define=false);
+	ucs::Net netAt(int uid) const;
 	int netCount() const;
 
 	using super::create;
