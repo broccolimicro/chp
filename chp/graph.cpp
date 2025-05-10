@@ -112,7 +112,7 @@ variable::variable() {
 	region = 0;
 }
 
-variable::variable(ucs::Net name, int region) {
+variable::variable(string name, int region) {
 	this->name = name;
 	this->region = region;
 }
@@ -138,9 +138,16 @@ graph::~graph()
  * @param region The region to search in
  * @return The index of the net if found, -1 otherwise
  */
-int graph::netIndex(ucs::Net name) const {
+int graph::netIndex(string name) const {
+	int region = 0;
+	size_t tic = name.rfind('\'');
+	if (tic != string::npos) {
+		region = std::stoi(name.substr(tic+1));
+		name = name.substr(0, tic);
+	}
+
 	for (int i = 0; i < (int)vars.size(); i++) {
-		if (vars[i].name == name) {
+		if (vars[i].name == name and vars[i].region == region) {
 			return i;
 		}
 	}
@@ -159,13 +166,20 @@ int graph::netIndex(ucs::Net name) const {
  * @param define Whether to create the net if not found
  * @return The index of the found or created net, or -1 if not found and not created
  */
-int graph::netIndex(ucs::Net name, bool define) {
+int graph::netIndex(string name, bool define) {
+	int region = 0;
+	size_t tic = name.rfind('\'');
+	if (tic != string::npos) {
+		region = std::stoi(name.substr(tic+1));
+		name = name.substr(0, tic);
+	}
+
 	vector<int> remote;
 	// First try to find the exact net
 	for (int i = 0; i < (int)vars.size(); i++) {
-		if (vars[i].name.fields == name.fields) {
+		if (vars[i].name == name) {
 			remote.push_back(i);
-			if (vars[i].name.region == name.region) {
+			if (vars[i].region == region) {
 				return i;
 			}
 		}
@@ -175,7 +189,7 @@ int graph::netIndex(ucs::Net name, bool define) {
 	// name, create a new net and connect it to the other vars with the
 	// same name
 	if (define or not remote.empty()) {
-		int uid = create(variable(name));
+		int uid = create(variable(name, region));
 		for (int i = 0; i < (int)remote.size(); i++) {
 			connect_remote(uid, remote[i]);
 		}
@@ -190,11 +204,12 @@ int graph::netIndex(ucs::Net name, bool define) {
  * @param uid The index of the net
  * @return A pair containing the name and region of the net
  */
-ucs::Net graph::netAt(int uid) const {
+string graph::netAt(int uid) const {
 	if (uid >= (int)vars.size()) {
-		return ucs::Net();
+		return "";
 	}
-	return vars[uid].name;
+	return vars[uid].name + (vars[uid].region != 0 ?
+		"'" + ::to_string(vars[uid].region) : "");
 }
 
 int graph::netCount() const {

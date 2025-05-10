@@ -56,10 +56,10 @@ ostream &operator<<(ostream &os, const transition &t);
 
 struct variable {
 	variable();
-	variable(ucs::Net name, int region=0);
+	variable(string name, int region=0);
 	~variable();
 
-	ucs::Net name;
+	string name;
 	int region;
 
 	vector<int> remote;
@@ -76,9 +76,9 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	vector<variable> vars;
 
-	int netIndex(ucs::Net name) const;
-	int netIndex(ucs::Net name, bool define=false);
-	ucs::Net netAt(int uid) const;
+	int netIndex(string name) const;
+	int netIndex(string name, bool define=false);
+	string netAt(int uid) const;
 	int netCount() const;
 
 	using super::create;
