@@ -130,31 +130,6 @@ graph::~graph()
 }
 
 /**
- * @brief Find the index of a net with the given name and region
- * 
- * Searches for a net by exact name and region match.
- * 
- * @param name The name of the net to find
- * @param region The region to search in
- * @return The index of the net if found, -1 otherwise
- */
-int graph::netIndex(string name) const {
-	int region = 0;
-	size_t tic = name.rfind('\'');
-	if (tic != string::npos) {
-		region = std::stoi(name.substr(tic+1));
-		name = name.substr(0, tic);
-	}
-
-	for (int i = 0; i < (int)vars.size(); i++) {
-		if (vars[i].name == name and vars[i].region == region) {
-			return i;
-		}
-	}
-	return -1;
-}
-
-/**
  * @brief Find or create a net with the given name and region
  * 
  * First tries to find an exact match for the net. If not found and define is true
@@ -194,6 +169,31 @@ int graph::netIndex(string name, bool define) {
 			connect_remote(uid, remote[i]);
 		}
 		return uid;
+	}
+	return -1;
+}
+
+/**
+ * @brief Find the index of a net with the given name and region
+ * 
+ * Searches for a net by exact name and region match.
+ * 
+ * @param name The name of the net to find
+ * @param region The region to search in
+ * @return The index of the net if found, -1 otherwise
+ */
+int graph::netIndex(string name) const {
+	int region = 0;
+	size_t tic = name.rfind('\'');
+	if (tic != string::npos) {
+		region = std::stoi(name.substr(tic+1));
+		name = name.substr(0, tic);
+	}
+
+	for (int i = 0; i < (int)vars.size(); i++) {
+		if (vars[i].name == name and vars[i].region == region) {
+			return i;
+		}
 	}
 	return -1;
 }
@@ -282,7 +282,7 @@ arithmetic::Parallel &graph::term(term_index idx) {
 	return transitions[idx.index].action.terms[idx.term];
 }
 
-map<petri::iterator, vector<petri::iterator> > graph::merge(int composition, graph g) {
+petri::mapping graph::merge(graph g) {
 	mapping netMap((int)g.vars.size());
 
 	// Add all of the vars and look for duplicates
@@ -321,7 +321,7 @@ map<petri::iterator, vector<petri::iterator> > graph::merge(int composition, gra
 	}
 
 	// Remap all expressions to new vars
-	return super::merge(composition, g);
+	return super::merge(g);
 }
 
 
@@ -332,51 +332,6 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 	{
 		super::reduce(proper_nesting, aggressive);
 		change = false;
-
-		for (int i = 0; i < (int)source.size(); i++)
-		{
-			simulator::super sim(this, source[i]);
-			sim.enabled();
-
-			change = false;
-			for (int j = 0; j < (int)sim.ready.size() and not change; j++)
-			{
-				bool firable = transitions[sim.ready[j].index].action.terms.size() <= 1;
-				for (int k = 0; k < (int)sim.ready[j].tokens.size() and firable; k++)
-				{
-					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++)
-						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index)
-							firable = false;
-					for (int l = 0; l < (int)arcs[petri::place::type].size() and firable; l++)
-						if (arcs[petri::place::type][l].from.index == sim.tokens[sim.ready[j].tokens[k]].index and arcs[petri::place::type][l].to.index != sim.ready[j].index)
-							firable = false;
-				}
-
-				if (firable) {
-					petri::enabled_transition t = sim.fire(j);
-					source[i].tokens = sim.tokens;
-					for (int k = (int)transitions[t.index].action.terms.size()-1; k >= 0; k--) {
-						int idx = i;
-						if (k > 0) {
-							idx = source.size();
-							source.push_back(source[i]);
-						}
-
-						arithmetic::State guard_action;
-						passesGuard(source[idx].encodings, source[idx].encodings, transitions[t.index].guard, &guard_action);
-						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
-						//source[idx].encodings &= guard_action;
-
-						arithmetic::State local = transitions[t.index].action.terms[k].evaluate(source[idx].encodings);
-						arithmetic::State remote = local.remote(remote_groups());
-
-						source[idx].encodings = localAssign(source[idx].encodings, remote, true);
-					}
-
-					change = true;
-				}
-			}
-		}
 
 		for (int i = 0; i < (int)reset.size(); i++)
 		{
@@ -442,7 +397,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 
 					for (int k = (int)arcs[petri::transition::type].size()-1; k >= 0; k--) {
 						if (arcs[petri::transition::type][k].from == i) {
-							disconnect(petri::iterator(petri::transition::type, k));
+							erase_arc(petri::iterator(petri::transition::type, k));
 						}
 					}
 
@@ -540,10 +495,6 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 		if (change)
 			continue;*/
 	}
-
-	// Determine the actual starting location of the tokens given the state information
-	if (reset.size() == 0)
-		reset = source;
 }
 
 void graph::decompose() {
