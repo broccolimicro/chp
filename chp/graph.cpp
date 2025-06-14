@@ -37,27 +37,12 @@ ostream &operator<<(ostream &os, const place &p) {
 	return os;
 }
 
-transition::transition()
-{
+transition::transition() {
 	guard = true;
-	action.terms.push_back(arithmetic::Parallel());
+	action = true;
 }
 
-transition::transition(arithmetic::Expression guard, arithmetic::Action assign)
-{
-	this->guard = guard;
-	this->action.terms.push_back(arithmetic::Parallel());
-	this->action.terms.back().actions.push_back(assign);
-}
-
-transition::transition(arithmetic::Expression guard, arithmetic::Parallel assign)
-{
-	this->guard = guard;
-	this->action.terms.push_back(assign);
-}
-
-transition::transition(arithmetic::Expression guard, arithmetic::Choice assign)
-{
+transition::transition(arithmetic::Expression guard, arithmetic::Choice assign) {
 	this->guard = guard;
 	this->action = assign;
 }
