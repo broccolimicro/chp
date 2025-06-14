@@ -328,7 +328,7 @@ petri::mapping graph::merge(graph g) {
 void graph::post_process(bool proper_nesting, bool aggressive) {
 	// Handle Reset Behavior
 	bool change = true;
-	while (change)
+	/*while (change)
 	{
 		super::reduce(proper_nesting, aggressive);
 		change = false;
@@ -377,7 +377,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 				}
 			}
 		}
-	}
+	}*/
 
 	change = true;
 	while (change) {
@@ -385,7 +385,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 
 		// Remove skips
 		change = false;
-		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and !change; i++) {
+		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and not change; i++) {
 			if (transitions[i.index].is_vacuous()) {
 				vector<petri::iterator> n = next(i); // places
 				if (n.size() > 1) {

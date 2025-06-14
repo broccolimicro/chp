@@ -90,7 +90,7 @@ struct transition : petri::transition
 {
 	transition();
 	transition(arithmetic::Expression guard, arithmetic::Action assign);
-	transition(arithmetic::Expression guard, arithmetic::Parallel assign);
+	transition(arithmetic::Expression guard, arithmetic::Parallel assign=arithmetic::Parallel());
 	transition(arithmetic::Expression guard, arithmetic::Choice assign);
 	~transition();
 
