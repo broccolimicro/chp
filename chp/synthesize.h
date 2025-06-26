@@ -5,7 +5,6 @@
 
 namespace chp {
 
-void synthesize_func(flow::Func &out, const graph &base);
+void synthesizeFunc(flow::Func &out, const graph &base);
 
 }
-
