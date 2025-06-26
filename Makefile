@@ -9,7 +9,7 @@ CXXFLAGS = -std=c++20 -g -Wall -fmessage-length=0 -O2
 LDFLAGS  =
 else
 CXXFLAGS = -std=c++20 -g -Wall -fmessage-length=0 -O0 --coverage -fprofile-arcs -ftest-coverage
-LDFLAGS  = --coverage -fprofile-arcs -ftest-coverage 
+LDFLAGS  = --coverage -fprofile-arcs -ftest-coverage
 endif
 
 SRCDIR        = $(NAME)
@@ -30,7 +30,7 @@ endif
 
 TEST_INCLUDE_PATHS = -I$(GTEST)/googletest/include $(TEST_DEPEND:%=-I../%) -I.
 TEST_LIBRARY_PATHS = -L$(GTEST)/build/lib $(TEST_DEPEND:%=-L../%) -L.
-TEST_LIBRARIES = -l$(NAME) $(TEST_DEPEND:%=-l%) -pthread -lgtest
+TEST_LIBRARIES = -l$(NAME) $(TEST_DEPEND:%=-l%) -pthread -lgtest -lcgraph -lgvc
 
 TESTS        := $(shell mkdir -p $(TESTDIR); find $(TESTDIR) -name '*.cpp')
 TEST_OBJECTS := $(TESTS:%.cpp=build/%.o) build/$(TESTDIR)/gtest_main.o
@@ -55,7 +55,9 @@ else
         CXXFLAGS += -D LINUX
     endif
     ifeq ($(UNAME_S),Darwin)
-        CXXFLAGS += -D OSX -mmacos-version-min=15.0
+        CXXFLAGS += -D OSX -mmacos-version-min=15.0 -D GRAPHVIZ_SUPPORTED
+        TEST_INCLUDE_PATHS += -I$(shell brew --prefix graphviz)/include
+        TEST_LIBRARY_PATHS += -L$(shell brew --prefix graphviz)/lib
     endif
     UNAME_P := $(shell uname -p)
     ifeq ($(UNAME_P),x86_64)
