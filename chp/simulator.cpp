@@ -307,7 +307,7 @@ int simulator::enabled(bool sorted) {
 
 			// As a result of graph::post_process(), all of the guards should have been
 			// merged into the closest assignment.
-			preload[i].depend = true;
+			preload[i].depend = arithmetic::Expression::boolOf(true);
 			for (int j = 0; j < (int)preload[i].tokens.size(); j++) {
 				preload[i].depend = preload[i].depend & tokens[preload[i].tokens[j]].guard;
 			}
@@ -419,7 +419,7 @@ int simulator::enabled(bool sorted) {
 		vector<int> output = base->next(transition::type, potential[i].index);
 		for (int j = 0; j < (int)output.size(); j++) {
 			potential[i].output_marking.push_back((int)tokens.size());
-			tokens.push_back(token(output[j], arithmetic::Operand(true), preload.size()));
+			tokens.push_back(token(output[j], arithmetic::Expression::boolOf(true), preload.size()));
 		}
 
 		preload.push_back(potential[i]);

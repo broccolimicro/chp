@@ -9,6 +9,7 @@
 #include "chp/graph.h"
 #include "common/mapping.h"
 #include "flow/func.h"
+#include <arithmetic/algorithm.h>
 
 using namespace std;
 
@@ -86,8 +87,9 @@ namespace chp {
 
 							// TODO: REACH INTO THE ACTION'S EXPRESSION FOR OPERATION(29) & when it's "recv/send", grab the first argument
 							// TODO: OH OH DON'T FORGET THESE EXPRESSIONS CAN ALSO BE WITHIN TRANSITION GUARDS!
-							if (!action.expr.operations.empty()) {									
-								for (const arithmetic::Operation &operation : action.expr.operations) {
+							if (!action.expr.top.isUndef()) {									
+								for (arithmetic::Operand o : action.expr.exprIndex()) {
+									const arithmetic::Operation &operation = *action.expr.getExpr(o.index);
 									if (operation.func == arithmetic::Operation::CALL) {
 										auto operand_to_net = [&base](const arithmetic::Operand &op) -> string { return base.netAt(op.index); };
 										auto operand_is_var = [](const arithmetic::Operand &op) -> bool { return op.isVar(); };
@@ -136,10 +138,10 @@ namespace chp {
 											//TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
 											// For example, CALL(func="send", channel_name="channel_to_send_on", *vector of params)"
 											vector<Operand> send_operands(operation.operands.begin() + 2, operation.operands.end());
-											auto operand_to_expr = [](const Operand &operand) -> Expression { return Expression(operand); };
+											//auto operand_to_expr = [](const Operand &operand) -> Expression { return Expression(operand); };
 											vector<Expression> send_expressions;
 											for (const auto &o : send_operands) {
-												send_expressions.push_back(Expression(o));
+												send_expressions.push_back(arithmetic::subExpr(action.expr, o));
 											}
 											Expression send_expression_array = arithmetic::array(send_expressions);
 											out.conds[condition_idx].req(flow_operand, send_expression_array);

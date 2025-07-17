@@ -38,7 +38,7 @@ ostream &operator<<(ostream &os, const place &p) {
 }
 
 transition::transition() {
-	guard = true;
+	guard = arithmetic::Expression::boolOf(true);
 	action = true;
 }
 
