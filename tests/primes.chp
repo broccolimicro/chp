@@ -1,0 +1,15 @@
+n = 2;
+*[ n < 20 ->
+    isPrime = true;
+    i = 2;
+    *[ i < n ->
+        [ n % i == 0 -> isPrime = false
+        [] true -> skip
+        ];
+        i = i + 1
+    ];
+    [ isPrime -> out!n
+    [] true -> skip
+    ];
+    n = n + 1
+]

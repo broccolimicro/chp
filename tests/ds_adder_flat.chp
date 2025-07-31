@@ -1,0 +1,9 @@
+*[ s = (Ad + Bd + ci) % pow(2, N);
+	co = (Ad + Bd + ci) / pow(2, N);
+	[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?
+  [] Ac & !Bc -> Sc!0,Sd!s; ci=co; Bc?, Bd?
+  [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?
+	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
+	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?
+	]
+]
