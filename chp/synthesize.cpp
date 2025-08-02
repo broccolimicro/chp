@@ -20,184 +20,125 @@ namespace chp {
 
   //TODO: RETVRN HERE
   //TODO: missing nets from predicate, request, (even mem?) expressions ...and ack's?
-  //TODO: try just grabbing everything from chp_to_flow_nets
   //TODO: also either ignore or match Condition uids: how is it getting auto-incremented beforehand?
+  //TODO: do we properly pipe #probes() down into Func para handle them later correctly in ModuleSynthesis & beyond?
+
+  //void synthesizeOperand(const arithmetic::Operand &chp_var, mapping &chp_to_flow_nets) {
+  arithmetic::Operand synthesizeOperandFromCHPVar(const string &chp_var_name, const int &chp_var_idx, const flow::Net::Purpose &purpose, flow::Func &func, mapping &chp_to_flow_nets) {
+
+    // Get or set Flow var for this CHP var
+    Operand flow_operand;
+    if (chp_to_flow_nets.has(chp_var_idx)) {
+      int flow_var_idx = chp_to_flow_nets.map(chp_var_idx);
+      flow_operand = Operand::varOf(flow_var_idx);  //TODO: preserve other Operand props?
+      //cout << "! HIT(" << chp_var_name << " @ CHP[" << chp_var_idx
+      //  << "]) => Flow[" << flow_var_idx << "]" << endl;
+
+    } else {
+      //TODO: synthesize appropriate widths
+      flow_operand = func.pushNet(chp_var_name, flow::Type(flow::Type::FIXED, BUS_WIDTH), purpose);
+      chp_to_flow_nets.set(chp_var_idx, static_cast<int>(flow_operand.index));
+      //cout << "? MISS(" << chp_var_name << " @ CHP[" << chp_var_idx
+      //  << "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
+    }
+
+    return flow_operand;
+  }
+
+
+  //TODO: inject where needed
+  // Crawl every expression inside chp::transition for nets to be mapped
+  void synthesizeOperandsInExpression(const arithmetic::Expression &e, mapping &chp_to_flow_nets, flow::Func &func) {
+    //TODO: how to know their purpose? Where is purpose revealed? when operand is first in call for recv/send
+  }
+
 
   int synthesizeConditionFromTransitions(
-      const graph& g,
-      const std::set<int>& transitions,
+      const graph &g,
+      const std::set<int> &transitions,
       arithmetic::Expression predicate,
-      flow::Func& func,
-      mapping& chp_to_flow_nets) {
+      flow::Func &func,
+      mapping &chp_to_flow_nets) {
 
     if (transitions.empty()) {
       return -1; // No transitions to process
     }
-
     int condition_idx = func.pushCond(predicate);
 
-    // Process each transition in the conditional
     for (int transition_idx : transitions) {
       if (transition_idx < 0 || transition_idx >= (int)g.transitions.size()) {
-        continue; // Skip invalid transition indices
+        continue;  // skip invalid transitions
       }
 
+      //cout << endl << "T" << transition_idx << endl;
       const chp::transition &transition = g.transitions[transition_idx];
-      //const arithmetic::Choice &action = transition.action;
-      ////cout << endl << "T" << transition_idx << endl;
-
-      // Process action terms
       flow::Condition &cond = func.conds[condition_idx];
-      for (const arithmetic::Parallel &term : transition.action.terms) {
+
+      // Crawl into every action
+      const arithmetic::Choice &action = transition.action;
+      for (const arithmetic::Parallel &term : action.terms) {
         for (const arithmetic::Action &action : term.actions) {
-          /*
-             cout << " > T.action(arith::Choice).terms(arith::Parallel)" << endl << "        "; //<< term << ") ";
-             if (term.isInfeasible()) { cout << " Infeasible "; }
-             if (term.isVacuous()) { cout << " Vacuous "; }
-             if (term.isPassive()) { cout << " Passive "; }
-             cout << endl;
 
-             cout << "term.ACTIONS:" << endl;
-           */
-
-          // Handle variable assignments (registers)
+          // Are we assigning to a local variable?
           if (action.variable != -1) {
-            //cout << "* action(var: " << action.variable << ", net: " << g.netAt(action.variable) << ") " << endl;//action.expr.to_string() << endl;
-            std::string net_name = g.netAt(action.variable);
+            std::string chp_var_name = g.netAt(action.variable);
             int chp_var_idx = action.variable;
+            Operand flow_operand = synthesizeOperandFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, func, chp_to_flow_nets);
 
-            // Get or create flow variable
-            Operand flow_operand;
-            if (chp_to_flow_nets.has(chp_var_idx)) {
-              int flow_var_idx = chp_to_flow_nets.map(chp_var_idx);
-              flow_operand = Operand::varOf(flow_var_idx);
-              //cout << "! HIT(" << net_name << " @ CHP[" << chp_var_idx
-              //  << "]) => Flow[" << flow_var_idx << "]" << endl;
-
-            } else {
-              flow_operand = func.pushNet(net_name, flow::Type(flow::Type::FIXED, BUS_WIDTH), flow::Net::REG);
-              chp_to_flow_nets.set(chp_var_idx, static_cast<int>(flow_operand.index));
-              //cout << "? MISS(" << net_name << " @ CHP[" << chp_var_idx
-              //  << "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
-            }
-
-            // Add the assignment to the condition
-            cond.mem(flow_operand, action.expr);
-            //cout << "* cond #" << condition_idx << " mem'd " << net_name << endl;
+            Expression mem_expr(action.expr);
+            mem_expr.apply(chp_to_flow_nets);
+            cond.mem(flow_operand, mem_expr);
+            //cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
+            //  << "in expr: " << mem_expr.to_string() << endl;
           }
-
-          //TODO: um, are these mutually exclusive, reg vs in/out? No, we can have an expresion/call wihtin an assign
-
-          // TODO: REACH INTO THE ACTION'S EXPRESSION FOR OPERATION(29) & when it's "recv/send", grab the first argument
-          // TODO: OH OH DON'T FORGET THESE EXPRESSIONS CAN ALSO BE WITHIN TRANSITION GUARDS!
-
           // Process any expressions in the action
+          //arithmetic::Expression expr(action.expr);
           if (!action.expr.top.isUndef()) {
-            for (const arithmetic::Operand& op : action.expr.exprIndex()) {
-              const arithmetic::Operation &operation = *action.expr.getExpr(op.index);
+            //TODO: fix lone .top bug. it strikes again (e.g. constants/etc)
+            //if (expr.sub.empty()) {
+            //} else {
+            for (const arithmetic::Operand& operand : action.expr.exprIndex()) {
+              const arithmetic::Operation &operation = *action.expr.getExpr(operand.index);
+
+              auto operand_is_var = [](const arithmetic::Operand& op) -> bool { return op.isVar(); };
+              auto operand_to_net = [&g](const arithmetic::Operand& op) -> std::string { return g.netAt(op.index); };
 
               //if (operation) {}
-              if (operation.func == arithmetic::Operation::CALL) {
-                auto operand_to_net = [&g](const arithmetic::Operand& op) -> std::string {
-                  return g.netAt(op.index);
-                };
-                auto operand_is_var = [](const arithmetic::Operand& op) -> bool {
-                  return op.isVar();
-                };
 
+              // Identify "VAR.func()" structure
+              /*
+              if (operation.func == arithmetic::Operation::OpType::TYPE_MEMBER) {
+                assert(operation.size() == 2);
+                assert(operation[0].type == 0);
+                int chp_var_idx = 
+                string chp_var_name = ;
+              }
+              */
+
+              if (operation.func == arithmetic::Operation::OpType::TYPE_CALL) {
+
+                //TODO: NOW WRONG! Re-arch to match "send(R, x) to R.send(x)"
                 std::string func_name = operation.operands[0].cnst.sval;
                 //cout << "* " << func_name << "():";
-                //for (const auto &operand : var_operands) {
-                //  cout << " " << operand_to_net(operand);
-                //}
-                //cout << endl;
-
-                //if (func_name == "recv" || func_name == "send") {
-                //  for (const arithmetic::Operand &operand : operation.operands) {
-                //    if (!operand.isVar()) continue;
-
-                //    std::string net_name = operand_to_net(operand);
-                //    int chp_var_idx = operand.index;
-
-                //    // Get or create flow variable for the channel
-                //    if (!chp_to_flow_nets.has(chp_var_idx)) {
-                //      flow::Net::Purpose purpose = (func_name == "recv") 
-                //        ? flow::Net::IN 
-                //        : flow::Net::OUT;
-
-                //      Operand flow_operand = func.pushNet(
-                //          net_name,
-                //          flow::Type(flow::Type::FIXED, BUS_WIDTH),
-                //          purpose
-                //          );
-                //      chp_to_flow_nets.set(action.variable, static_cast<int>(flow_operand.index));
-
-                //      // Add to the condition's inputs/outputs
-                //      if (purpose == flow::Net::IN) {
-                //        cond.ack(flow_operand);
-
-                //      } else {
-                //        //TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
-                //        // For example, CALL(func="send", channel_name="channel_to_send_on", *vector of params)"
-                //        vector<Operand> send_operands(operation.operands.begin() + 2, operation.operands.end());
-
-                //        //auto operand_to_expr = [](const Operand &operand) -> Expression { return Expression(operand); };
-                //        vector<Expression> send_expressions;
-                //        for (const auto &o : send_operands) {
-                //          send_expressions.push_back(arithmetic::subExpr(action.expr, o));
-                //        }
-
-                //        Expression send_expression_array = arithmetic::array(send_expressions);
-                //        cond.req(flow_operand, send_expression_array);
-                //      }
-                //    }
-                //  }
-                //}
 
                 //TODO: optimize perf (don't do string comparison)
                 if (func_name == "recv") {
                   auto var_operands = operation.operands | std::views::filter(operand_is_var);
                   for (const auto &operand : var_operands) {
-                    string net_name = operand_to_net(operand);
-                    int chp_var_idx = operand.index; //g.netIndex(net_name);
+                    string chp_var_name = operand_to_net(operand);
+                    int chp_var_idx = operand.index; //g.netIndex(chp_var_name);
+                    Operand flow_operand = synthesizeOperandFromCHPVar(chp_var_name, chp_var_idx, flow::Net::IN, func, chp_to_flow_nets);
+                    //TODO: THEN WHY ISN'T THIS NET BEING SAVED IN FLOW?
 
-                    // Get or set Flow var for this CHP var
-                    Operand flow_operand;
-                    if (chp_to_flow_nets.has(chp_var_idx)) {
-                      int flow_var_idx = chp_to_flow_nets.map(chp_var_idx);
-                      flow_operand = Operand::varOf(flow_var_idx);  //TODO: preserve other Operand props?
-                                                                    //cout << "! HIT(" << net_name << " @ CHP[" << chp_var_idx
-                                                                    //  << "]) => Flow[" << flow_var_idx << "]" << endl;
-
-                    } else {
-                      flow_operand = func.pushNet(net_name, flow::Type(flow::Type::FIXED, BUS_WIDTH), flow::Net::IN);
-                      chp_to_flow_nets.set(chp_var_idx, static_cast<int>(flow_operand.index));
-                      //cout << "? MISS(" << net_name << " @ CHP[" << chp_var_idx
-                      //  << "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
-                    }
                     func.conds[condition_idx].ack(flow_operand);
-                    //cout << "* cond #" << condition_idx << " ack'd " << net_name << endl;
+                    //cout << "* cond #" << condition_idx << " ack'd " << chp_var_name << endl;
                   }
 
                 } else if (func_name == "send") {
                   //TODO: don't forget to send raw constants (e.g. Operand::intOf(1)), not just vars
-                  string net_name = operand_to_net(operation.operands[1]);
-                  int chp_var_idx = g.netIndex(net_name);
-
-                  // Get or set Flow var for this CHP var
-                  Operand flow_operand;
-                  if (chp_to_flow_nets.has(chp_var_idx)) {
-                    int flow_var_idx = chp_to_flow_nets.map(chp_var_idx);
-                    flow_operand = Operand::varOf(chp_to_flow_nets.map(chp_var_idx));
-                    //cout << "! HIT(" << net_name << " @ CHP[" << chp_var_idx
-                    //  << "]) => Flow[" << flow_var_idx << "]" << endl;
-
-                  } else {
-                    flow_operand = func.pushNet(net_name, flow::Type(flow::Type::FIXED, BUS_WIDTH), flow::Net::OUT);
-                    chp_to_flow_nets.set(chp_var_idx, static_cast<int>(flow_operand.index));
-                    //cout << "? MISS(" << net_name << " @ CHP[" << chp_var_idx
-                    //  << "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
-                  }
+                  string chp_var_name = operand_to_net(operation.operands[1]);
+                  int chp_var_idx = g.netIndex(chp_var_name);
+                  Operand flow_operand = synthesizeOperandFromCHPVar(chp_var_name, chp_var_idx, flow::Net::OUT, func, chp_to_flow_nets);
 
                   //TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
                   // For example, CALL(func="send", channel_name="channel_to_send_on", *vector of params)"
@@ -208,11 +149,14 @@ namespace chp {
                     send_expressions.push_back(arithmetic::subExpr(action.expr, operand));
                   }
                   Expression send_expression_array = arithmetic::array(send_expressions);
+                  send_expression_array = send_expression_array.apply(chp_to_flow_nets);
                   func.conds[condition_idx].req(flow_operand, send_expression_array);
-                  //cout << "* cond #" << condition_idx << " req'd " << net_name << endl;
+                  //cout << "* cond #" << condition_idx << " req'd " << chp_var_name << endl
+                  //  << "w/ expr: " << send_expression_array << endl;
 
                   //} else if (func_name == "probe") { //used exclusively in these guards! they need valid signals too, just not ready singla or channel for recv behavior
                 }
+                //cout << endl;
               }
             }
           }
@@ -258,23 +202,6 @@ namespace chp {
         }
       }
     }
-    /*
-    for (size_t place_idx = 0; place_idx < g.places.size(); place_idx++) {
-      const auto& place = g.places[place_idx];
-      const auto& choice_splits = place.splits[petri::choice];
-
-      for (const auto& split_group : choice_splits) {
-        if (split_group.count > 1) {
-          for (const auto& transition_idx : g.next(petri::transition::type, place_idx)) {
-            cout << split_group.count << "(" << place_idx << ", " << transition_idx << ")" << endl;
-          }
-        }
-        if (split_group.branch.size() > 1) {
-          splits[place_idx].insert(split_group.branch.begin(), split_group.branch.end());
-        }
-      }
-    }
-    */
 
     //TODO: flatten split groups
 

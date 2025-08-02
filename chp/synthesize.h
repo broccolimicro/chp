@@ -9,10 +9,10 @@
 
 namespace chp {
 
+	arithmetic::Operand synthesizeOperandFromCHPVar(const string &chp_var_name, const int &chp_var_idx, const flow::Net::Purpose &purpose, flow::Func &func, mapping &chp_to_flow_nets);
+
 	//TODO: flow::Condition synthesizeConditionFromCHP(const graph &g);
-	//TODO: flow::Condition synthesizeConditionFromTransitions(const std::set<int> &transitions);
 	int synthesizeConditionFromTransitions(const graph& g, const std::set<int>& transitions, arithmetic::Expression predicate, flow::Func& func, mapping& chp_to_flow_nets);
-	//int synthesizeConditionFromCHP(flow::Func& func, const std::set<int>& transitions, mapping& chp_to_flow_nets, const graph& g);
 	flow::Func synthesizeFuncFromCHP(const graph &g);
 
 }
