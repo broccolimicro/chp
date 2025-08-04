@@ -76,34 +76,34 @@ auto to_unordered_multiset = [](const std::vector<T>& v) {
 };
 
 
-bool areEquivalent(Func &real, Func &expected) {
+bool areEquivalent(flow::Func &real, flow::Func &expected) {
 	//TODO: insensitive to ids and condition order
 
 	EXPECT_EQ(real.nets.size(), expected.nets.size());
 	//std::sort(real.nets.begin(), real.nets.end());
 	//std::sort(expected.nets.begin(), expected.nets.end());
-	auto real_nets = to_unordered_multiset<Net>(real.nets);
-	auto expected_nets = to_unordered_multiset<Net>(expected.nets);
+	auto real_nets = to_unordered_multiset<flow::Net>(real.nets);
+	auto expected_nets = to_unordered_multiset<flow::Net>(expected.nets);
 	EXPECT_EQ(real_nets, expected_nets); 
 
 	EXPECT_EQ(real.conds.size(), expected.conds.size());
 	//std::sort(real.conds.begin(), real.conds.end());
 	//std::sort(expected.conds.begin(), expected.conds.end());
-	auto real_conds = to_unordered_multiset<Condition>(real.conds);
-	auto expected_conds = to_unordered_multiset<Condition>(expected.conds);
+	auto real_conds = to_unordered_multiset<flow::Condition>(real.conds);
+	auto expected_conds = to_unordered_multiset<flow::Condition>(expected.conds);
 	EXPECT_EQ(real_conds, expected_conds);
 
 	return true;
 }
 
 
-void testFuncSynthesisFromCHP(const string &test_name, flow::Func expected, bool render=true) {
-	string filenameWithoutExtension = (TEST_DIR / (test_name)).string();
+void testFuncSynthesisFromCHP(flow::Func expected, bool render=true) {
+	string filenameWithoutExtension = (TEST_DIR / expected.name).string();
 	string chpFilename = filenameWithoutExtension + ".chp";
 	string chpRaw = readStringFromFile(chpFilename, true);
 	chp::graph g = importCHPFromString(chpRaw);
 	g.post_process(true, false);
-	g.name = test_name;
+	g.name = expected.name;
 
 	if (render) {
 		string graphvizRaw = chp::export_graph(g, true).to_string();
@@ -111,7 +111,7 @@ void testFuncSynthesisFromCHP(const string &test_name, flow::Func expected, bool
 	}
 
 	flow::Func real = chp::synthesizeFuncFromCHP(g);
-	EXPECT_EQ(real.name, test_name);
+	EXPECT_EQ(real.name, expected.name);
 	EXPECT_TRUE(areEquivalent(real, expected));
 
 	/*
@@ -129,40 +129,40 @@ void testFuncSynthesisFromCHP(const string &test_name, flow::Func expected, bool
 
 
 TEST(FlowSynthesis, Counter) {
-	Func func;
+	flow::Func func;
 	func.name = "counter";
-	Operand i = func.pushNet("i", Type(Type::FIXED, WIDTH), Net::REG);
+	Operand i = func.pushNet("i", Type(Type::FIXED, WIDTH), flow::Net::REG);
 	Expression expri(i);
 	//Expression increment_i(i + 1);
 
 	int condition_idx = func.pushCond(expri < 8);
 	func.conds[condition_idx].mem(i, expri + 1);
 
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, Countdown) {
-	Func func;
+	flow::Func func;
 	func.name = "countdown";
-	Operand log = func.pushNet("log", Type(Type::FIXED, WIDTH), Net::OUT);
-	Operand n = func.pushNet("n", Type(Type::FIXED, WIDTH), Net::REG);
+	Operand log = func.pushNet("log", Type(Type::FIXED, WIDTH), flow::Net::OUT);
+	Operand n = func.pushNet("n", Type(Type::FIXED, WIDTH), flow::Net::REG);
 	Expression exprn(n);
 	//Expression decrement_n(n - 1);
 
 	int condition_idx = func.pushCond(exprn > 0);
-	Condition cond = func.conds[condition_idx];
+	flow::Condition cond = func.conds[condition_idx];
 	cond.req(log, exprn);
 	cond.mem(n, n - 1);
 
 	//TODO: one-off trailing send: log!1337
 
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, Buffer) {
-	Func func;
+	flow::Func func;
 	func.name = "buffer";
 	Operand L = func.pushNet("L", Type(Type::FIXED, WIDTH), flow::Net::IN);
 	Operand R = func.pushNet("R", Type(Type::FIXED, WIDTH), flow::Net::OUT);
@@ -172,12 +172,12 @@ TEST(FlowSynthesis, Buffer) {
 	func.conds[branch0].req(R, exprL);
 	func.conds[branch0].ack(L);
 
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, Merge) {
-	Func func;
+	flow::Func func;
 	func.name = "merge";
 	Operand L0 = func.pushNet("L0", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
 	Operand L1 = func.pushNet("L1", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
@@ -195,12 +195,12 @@ TEST(FlowSynthesis, Merge) {
 	func.conds[branch1].req(R, exprL1);
 	func.conds[branch1].ack({C, L1});
 
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, Split) {
-	Func func;
+	flow::Func func;
 	func.name = "split";
 	Operand L = func.pushNet("L", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
 	Operand C = func.pushNet("C", Type(Type::TypeName::FIXED, 1), flow::Net::IN);
@@ -217,36 +217,34 @@ TEST(FlowSynthesis, Split) {
 	func.conds[branch1].req(R1, exprL);
 	func.conds[branch1].ack({C, L});
 
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, IsEven) {
-	Func func;
+	flow::Func func;
 	func.name = "is_even";
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, Primes) {
-	Func func;
+	flow::Func func;
 	func.name = "primes";
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, TrafficLight) {
-	Func func;
+	flow::Func func;
 	func.name = "traffic_light";
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
 TEST(FlowSynthesis, DSAdderFlat) {
-	string name = "ds_adder_flat";
-	Func func;
-	func.name = name;
-
+	flow::Func func;
+	func.name = "ds_adder_flat";
 	Operand Ad = func.pushNet("Ad", Type(Type::FIXED, WIDTH), flow::Net::IN);
 	Operand Ac = func.pushNet("Ac", Type(Type::FIXED, 1), flow::Net::IN);
 	Operand Bd = func.pushNet("Bd", Type(Type::FIXED, WIDTH), flow::Net::IN);
@@ -292,7 +290,7 @@ TEST(FlowSynthesis, DSAdderFlat) {
 	func.conds[branch4].mem(ci, Operand::intOf(0));
 	func.conds[branch4].ack({Ac, Ad, Bc, Bd});
 
-	testFuncSynthesisFromCHP(name, func);
+	testFuncSynthesisFromCHP(func);
 }
 
 
@@ -345,5 +343,5 @@ TEST(FlowSynthesis, DSAdder) {
 	func.conds[branch4].mem(ci, Operand::intOf(0));
 	func.conds[branch4].ack({Ac, Ad, Bc, Bd});
 
-	testFuncSynthesisFromCHP(func.name, func);
+	testFuncSynthesisFromCHP(func);
 }
