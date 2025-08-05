@@ -27,12 +27,12 @@ string instability::to_string(const chp::graph &g)
 
 	result += " cause: {";
 
-	for (int j = 0; j < (int)history.size(); j++)
-	{
-		if (j != 0)
+	for (auto i = history.begin(); i != history.end(); i++) {
+		if (i != history.begin()) {
 			result += "; ";
+		}
 
-		result += history[j].to_string(g);
+		result += ::to_string(*i);
 	}
 	result += "}";
 	return result;
@@ -43,15 +43,11 @@ interference::interference()
 
 }
 
-interference::interference(const term_index &first, const term_index &second)
-{
-	if (first < second)
-	{
+interference::interference(int first, int second) {
+	if (first < second) {
 		this->first = first;
 		this->second = second;
-	}
-	else
-	{
+	} else {
 		this->first = second;
 		this->second = first;
 	}
@@ -62,9 +58,8 @@ interference::~interference()
 
 }
 
-string interference::to_string(const chp::graph &g)
-{
-	return "interfering assignments " + first.to_string(g) + " and " + second.to_string(g);
+string interference::to_string(const chp::graph &g) {
+	return "interfering assignments " + ::to_string(first) + " and " + ::to_string(second);
 }
 
 mutex::mutex()
@@ -430,9 +425,7 @@ int simulator::enabled(bool sorted) {
 
 	for (int i = 0; i < (int)loaded.size(); i++) {
 		if (not loaded[i].vacuous) {
-			for (int j = 0; j < (int)loaded[i].local_action.states.size(); j++) {
-				ready.push_back(pair<int, int>(i, j));
-			}
+			ready.push_back(i);
 		}
 	}
 
@@ -447,16 +440,15 @@ enabled_transition simulator::fire(int index)
 		return enabled_transition();
 	}
 
-	enabled_transition t = loaded[ready[index].first];
-	int term = ready[index].second;
+	enabled_transition t = loaded[ready[index]];
 
 	// We need to go through the potential list of transitions and flatten their input and output tokens.
 	// Since we know that no transition can use the same token twice, we can simply mush them all
 	// into one big list and then remove duplicates.
 	// assumes that a transition in the loaded array only depends upon transitions before it in the array
-	vector<int> visited(1, ready[index].first);
+	vector<int> visited(1, ready[index]);
 	for (int i = 0; i < (int)t.tokens.size(); i++) {
-		if (tokens[t.tokens[i]].cause >= 0 and tokens[t.tokens[i]].cause < ready[index].first)
+		if (tokens[t.tokens[i]].cause >= 0 and tokens[t.tokens[i]].cause < ready[index])
 		{
 			t.tokens.insert(t.tokens.end(), loaded[tokens[t.tokens[i]].cause].tokens.begin(), loaded[tokens[t.tokens[i]].cause].tokens.end());
 			t.output_marking.insert(t.output_marking.end(), loaded[tokens[t.tokens[i]].cause].output_marking.begin(), loaded[tokens[t.tokens[i]].cause].output_marking.end());
@@ -495,7 +487,7 @@ enabled_transition simulator::fire(int index)
 			// ASSUME ready array is sorted in ascending order
 			bool is_effective = false;
 			for (; j >= 0 and not is_effective; j--)
-				is_effective = (ready[j].first == i);
+				is_effective = (ready[j] == i);
 
 			bool is_deterministic = true;
 			for (int k = 0; k < (int)intersect.size() and is_deterministic; k++)
@@ -577,9 +569,9 @@ enabled_transition simulator::fire(int index)
 	// transitions that have fired since this active transition was enabled.
 	for (int j = 0; j < (int)t.history.size(); j++) {
 		arithmetic::State historical_action = base->term(t.history[j]).evaluate(encoding).remote(base->remote_groups());
-		if (arithmetic::areInterfering(t.remote_action[term], historical_action))
+		if (arithmetic::areInterfering(t.remote_action, historical_action))
 		{
-			interference err(term_index(t.index, term), t.history[j]);
+			interference err(t.index, t.history[j]);
 			vector<interference>::iterator loc = lower_bound(interference_errors.begin(), interference_errors.end(), err);
 			if (loc == interference_errors.end() or *loc != err)
 			{
@@ -588,18 +580,18 @@ enabled_transition simulator::fire(int index)
 			}
 		}
 
-		t.local_action[term] = arithmetic::interfere(t.local_action[term], historical_action);
-		t.remote_action[term] = arithmetic::interfere(t.remote_action[term], historical_action);
+		t.local_action = arithmetic::interfere(t.local_action, historical_action);
+		t.remote_action = arithmetic::interfere(t.remote_action, historical_action);
 	}
 
 	// Update the state
-	global = localAssign(global, t.remote_action[term], t.stable);
-	encoding = remoteAssign(localAssign(encoding, t.local_action[term], t.stable), global, true);
+	global = localAssign(global, t.remote_action, t.stable);
+	encoding = remoteAssign(localAssign(encoding, t.local_action, t.stable), global, true);
 
 	// Update the history. The first thing we need to do is remove any assignments that no longer
 	// have any effect on the global state. So we remove history items where all of the terms
 	// in their assignments are conflicting with terms in more recent assignments.
-	arithmetic::State m = t.local_action[term].mask();
+	arithmetic::State m = t.local_action.mask();
 	for (list<firing>::reverse_iterator i = history.rbegin(); i != history.rend();) {
 		if (i->local_action.mask(m).isTautology()) {
 			i++;
@@ -611,10 +603,10 @@ enabled_transition simulator::fire(int index)
 	}
 
 	// Add the latest firing to the history.
-	history.push_back(firing(t, term));
+	history.push_back(firing(t));
 	
 	for (int i = 0; i < (int)loaded.size(); i++) {
-		loaded[i].history.push_back(term_index(t.index, term));
+		loaded[i].history.push_back(t.index);
 	}
 
 	return t;
@@ -675,7 +667,7 @@ state simulator::get_key()
 	state result;
 	result.encodings = encoding;
 	for (int i = 0; i < (int)ready.size(); i++)
-		result.tokens.push_back(petri::token(loaded[ready[i].first].index));
+		result.tokens.push_back(petri::token(loaded[ready[i]].index));
 	sort(result.tokens.begin(), result.tokens.end());
 	result.tokens.resize(unique(result.tokens.begin(), result.tokens.end()) - result.tokens.begin());
 	return result;
@@ -711,7 +703,7 @@ vector<pair<int, int> > simulator::get_choices()
 
 	vector<int> lindices;
 	for (int i = 0; i < (int)ready.size(); i++)
-		lindices.push_back(ready[i].first);
+		lindices.push_back(ready[i]);
 	sort(lindices.begin(), lindices.end());
 	lindices.resize(unique(lindices.begin(), lindices.end()) - lindices.begin());
 

@@ -3,7 +3,6 @@
 #include <common/standard.h>
 #include <common/net.h>
 #include <arithmetic/operation.h>
-#include <boolean/cover.h>
 #include <petri/graph.h>
 
 #include "state.h"
@@ -90,7 +89,7 @@ ostream &operator<<(ostream &os, const place &p);
 struct transition : petri::transition
 {
 	transition();
-	transition(arithmetic::Expression guard, arithmetic::Choice assign=true);
+	transition(int uid, arithmetic::Operation expr);
 	~transition();
 
 	// uid is -1 if this transition does not assign any value. Either way, the guard (represented by the expr) must be satisfied
@@ -103,8 +102,8 @@ struct transition : petri::transition
 	static transition merge(int composition, const transition &t0, const transition &t1);
 	static bool mergeable(int composition, const transition &t0, const transition &t1);
 
-	bool is_infeasible();
-	bool is_vacuous();
+	bool is_infeasible() const;
+	bool is_vacuous() const;
 };
 
 ostream &operator<<(ostream &os, const transition &t);
@@ -146,9 +145,6 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	void connect_remote(int from, int to);
 	vector<vector<int> > remote_groups();
-
-	chp::transition &at(term_index idx);
-	arithmetic::Parallel &term(term_index idx);
 
 	using super::merge;
 	petri::mapping merge(graph g);

@@ -25,11 +25,11 @@ struct instability : enabled_transition
 // An instability occurs when the pull up and the pull down network of a gate
 // are both enabled at the same time. This creates a short across the gate that
 // could lead to circuit damage.
-// the pair<term_index, term_index> represents the two interfering transitions.
-struct interference : pair<term_index, term_index>
+// the pair<int, int> represents the two interfering transitions.
+struct interference : pair<int, int>
 {
 	interference();
-	interference(const term_index &first, const term_index &second);
+	interference(int first, int second);
 	~interference();
 
 	string to_string(const chp::graph &g);
@@ -164,7 +164,7 @@ struct simulator
 	// for firing.
 	// ready[i].first indexes into simulator::loaded[]
 	// ready[i].second indexes into base->transitions[loaded[ready[i].first].index].local_action.cubes[] which is the cube in the action of that transition
-	vector<pair<int, int> > ready;
+	vector<int> ready;
 
 	int enabled(bool sorted = false);
 	enabled_transition fire(int index);

@@ -40,7 +40,7 @@ ostream &operator<<(ostream &os, const place &p) {
 transition::transition() {
 	uid = -1;
 	// initialize as a skip
-	expr = arithmetic::Operation(arithmetic::Operation::IDENTITY, {Operand::boolOf(true)});
+	expr = arithmetic::Operation(arithmetic::Operation::IDENTITY, {arithmetic::Operand::boolOf(true)});
 }
 
 transition::transition(int uid, arithmetic::Operation expr) {
@@ -66,14 +66,14 @@ bool transition::mergeable(int composition, const transition &t0, const transiti
 	return t0.is_vacuous() or t1.is_vacuous();
 }
 
-bool transition::is_infeasible() {
+bool transition::is_infeasible() const {
 	return expr.func == arithmetic::Operation::IDENTITY
 		and expr.operands.size() == 1u
 		and expr.operands[0].isConst()
 		and expr.operands[0].cnst.isNeutral();
 }
 
-bool transition::is_vacuous() {
+bool transition::is_vacuous() const {
 	return expr.func == arithmetic::Operation::IDENTITY
 		and expr.operands.size() == 1u
 		and expr.operands[0].isConst()
@@ -197,7 +197,7 @@ vector<arithmetic::Operand> graph::exprIndex() const {
 	vector<arithmetic::Operand> result;
 	for (auto i = transitions.begin(); i != transitions.end(); i++) {
 		if (not i->expr.isUndef()) {
-			result.push_back(i->op());
+			result.push_back(i->expr.op());
 		}
 	}
 	return result;
@@ -206,22 +206,49 @@ vector<arithmetic::Operand> graph::exprIndex() const {
 // I need an efficient way to map expressions to transitions
 // that can be updated...
 const arithmetic::Operation *graph::getExpr(size_t index) const {
-	return &transitions[index].expr;
+	// TODO(edward.bingham) We need to use index_vector in petri before we can do this
+	// return &transitions[index].expr;
+
+	for (auto i = transitions.begin(); i != transitions.end(); i++) {
+		if (i->expr.exprIndex == index) {
+			return &(i->expr);
+		}
+	}
+	return nullptr;
 }
 
-bool graph::setExpr(Operation o) {
-	if (o.exprIndex >= transitions.size()) {
+bool graph::setExpr(arithmetic::Operation o) {
+	for (auto i = transitions.begin(); i != transitions.end(); i++) {
+		if (i->expr.exprIndex == o.exprIndex) {
+			i->expr = o;
+			return true;
+		}
+	}
+	return false;
+
+	// TODO(edward.bingham) we need to use index_vector
+	/*if (o.exprIndex >= transitions.size()) {
 		// TODO(edward.bingham) create a new transition
 	}
 	transitions[o.exprIndex].expr = o;
-	return true;
+	return true;*/
 }
 
-Operand graph::pushExpr(Operation o) {
-	return Operand::undef();
+arithmetic::Operand graph::pushExpr(arithmetic::Operation o) {
+	// TODO(edward.bingham) we need to use index_vector
+	o.exprIndex = transitions.size();
+	transitions.push_back(transition(-1, o));
+	return o.op();
 }
 
 bool graph::eraseExpr(size_t index) {
+	// TODO(edward.bingham) we need to use index_vector
+	for (int i = 0; i < (int)transitions.size(); i++) {
+		if (transitions[i].expr.exprIndex == index) {
+			pinch(petri::iterator(transition::type, i));
+			return true;
+		}
+	}
 	return false;
 }
 
@@ -283,14 +310,6 @@ vector<vector<int> > graph::remote_groups() {
 	return groups;
 }
 
-chp::transition &graph::at(term_index idx) {
-	return transitions[idx.index];
-}
-
-arithmetic::Parallel &graph::term(term_index idx) {
-	return transitions[idx.index].action.terms[idx.term];
-}
-
 petri::mapping graph::merge(graph g) {
 	mapping netMap((int)g.vars.size());
 
@@ -325,8 +344,7 @@ petri::mapping graph::merge(graph g) {
 	}
 
 	for (int i = 0; i < (int)g.transitions.size(); i++) {
-		g.transitions[i].action.apply(netMap);
-		g.transitions[i].guard.apply(netMap);
+		g.transitions[i].expr.apply(netMap);
 	}
 
 	// Remap all expressions to new vars
@@ -597,19 +615,20 @@ void expand() {
 }
 
 arithmetic::Expression graph::exclusion(int index) const {
+	// TODO(edward.bingham) fix after rearch
 	arithmetic::Expression result;
-	vector<int> p = prev(transition::type, index);
+	/*vector<int> p = prev(transition::type, index);
 	
 	for (int i = 0; i < (int)p.size(); i++) {
 		vector<int> n = next(place::type, p[i]);
 		if (n.size() > 1) {
 			for (int j = 0; j < (int)n.size(); j++) {
 				if (n[j] != index) {
-					result = result | transitions[n[j]].guard;
+					result = result | transitions[n[j]].expr;
 				}
 			}
 		}
-	}
+	}*/
 	return result;
 }
 

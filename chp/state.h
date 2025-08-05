@@ -12,30 +12,6 @@ namespace chp
 struct graph;
 struct firing;
 
-// This points to the cube 'term' in the action of transition 'index' in a graph.
-struct term_index
-{
-	term_index();
-	term_index(int index);
-	term_index(int index, int term);
-	~term_index();
-
-	// graph::transitions[index].local_action.cubes[term]
-	int index;
-	int term;
-
-	void hash(hasher &hash) const;
-
-	string to_string(const graph &g);
-};
-
-bool operator<(term_index i, term_index j);
-bool operator>(term_index i, term_index j);
-bool operator<=(term_index i, term_index j);
-bool operator>=(term_index i, term_index j);
-bool operator==(term_index i, term_index j);
-bool operator!=(term_index i, term_index j);
-
 // This stores all the information necessary to fire an enabled transition: the local
 // and remote tokens that enable it, and the total state of those tokens.
 struct enabled_transition : petri::enabled_transition
@@ -59,14 +35,14 @@ struct enabled_transition : petri::enabled_transition
 	// between when this transition was enabled and when it fires. This allows us
 	// to determine whether this transition was stable and non-interfering when
 	// we finally decide to let the event fire.
-	vector<term_index> history;
+	vector<int> history; // index into graph::transitions
 	
 	// The intersection of all of the terms of the guard of this transition which
 	// the current state passed. This is ANDed into the current state to fill in
 	// missing information.
 	arithmetic::State guard_action;
-	arithmetic::Region local_action;
-	arithmetic::Region remote_action;
+	arithmetic::State local_action;
+	arithmetic::State remote_action;
 
 	// The effective guard of this enabled transition.
 	arithmetic::Expression guard;
@@ -94,13 +70,13 @@ bool operator==(enabled_transition i, enabled_transition j);
 bool operator!=(enabled_transition i, enabled_transition j);
 
 struct firing {
-	firing(const enabled_transition &t, int i);
+	firing(const enabled_transition &t);
 	~firing();
 
 	arithmetic::State guard_action;
 	arithmetic::State local_action;
 	arithmetic::State remote_action;
-	term_index index;
+	int index; // into graph::transitions
 };
 
 // Tokens are like program counters, marking the position of the current state

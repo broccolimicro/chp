@@ -13,74 +13,6 @@
 namespace chp
 {
 
-term_index::term_index()
-{
-	index = -1;
-	term = -1;
-}
-
-term_index::term_index(int index)
-{
-	this->index = index;
-	term = -1;
-}
-
-term_index::term_index(int index, int term)
-{
-	this->index = index;
-	this->term = term;
-}
-
-term_index::~term_index()
-{
-
-}
-
-void term_index::hash(hasher &hash) const
-{
-	hash.put(&index);
-	hash.put(&term);
-}
-
-string term_index::to_string(const graph &g)
-{
-	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + export_expression(g.transitions[index].guard, g).to_string() + " -> " + export_composition(g.transitions[index].action[term], g).to_string();
-}
-
-bool operator<(term_index i, term_index j)
-{
-	return (i.index < j.index) or
-		   (i.index == j.index and i.term < j.term);
-}
-
-bool operator>(term_index i, term_index j)
-{
-	return (i.index > j.index) or
-		   (i.index == j.index and i.term > j.term);
-}
-
-bool operator<=(term_index i, term_index j)
-{
-	return (i.index < j.index) or
-		   (i.index == j.index and i.term <= j.term);
-}
-
-bool operator>=(term_index i, term_index j)
-{
-	return (i.index > j.index) or
-		   (i.index == j.index and i.term >= j.term);
-}
-
-bool operator==(term_index i, term_index j)
-{
-	return (i.index == j.index and i.term == j.term);
-}
-
-bool operator!=(term_index i, term_index j)
-{
-	return (i.index != j.index or i.term != j.term);
-}
-
 enabled_transition::enabled_transition()
 {
 	index = 0;
@@ -152,12 +84,11 @@ bool operator!=(enabled_transition i, enabled_transition j)
 	return (i.index != j.index or i.history != j.history);
 }
 
-firing::firing(const enabled_transition &t, int i) {
+firing::firing(const enabled_transition &t) {
 	this->guard_action = t.guard_action;
-	this->local_action = t.local_action[i];
-	this->remote_action = t.remote_action[i];
-	this->index.index = t.index;
-	this->index.term = i;
+	this->local_action = t.local_action;
+	this->remote_action = t.remote_action;
+	this->index = t.index;
 }
 
 firing::~firing() {
