@@ -128,7 +128,7 @@ void testFuncSynthesisFromCHP(flow::Func expected, bool render=true) {
 }
 
 
-TEST(FlowSynthesis, Counter) {
+TEST(ChpToFlow, Counter) {
 	flow::Func func;
 	func.name = "counter";
 	Operand i = func.pushNet("i", Type(Type::FIXED, WIDTH), flow::Net::REG);
@@ -142,7 +142,7 @@ TEST(FlowSynthesis, Counter) {
 }
 
 
-TEST(FlowSynthesis, Countdown) {
+TEST(ChpToFlow, Countdown) {
 	flow::Func func;
 	func.name = "countdown";
 	Operand log = func.pushNet("log", Type(Type::FIXED, WIDTH), flow::Net::OUT);
@@ -161,7 +161,7 @@ TEST(FlowSynthesis, Countdown) {
 }
 
 
-TEST(FlowSynthesis, Buffer) {
+TEST(ChpToFlow, Buffer) {
 	flow::Func func;
 	func.name = "buffer";
 	Operand L = func.pushNet("L", Type(Type::FIXED, WIDTH), flow::Net::IN);
@@ -176,7 +176,7 @@ TEST(FlowSynthesis, Buffer) {
 }
 
 
-TEST(FlowSynthesis, Merge) {
+TEST(ChpToFlow, Merge) {
 	flow::Func func;
 	func.name = "merge";
 	Operand L0 = func.pushNet("L0", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
@@ -199,7 +199,7 @@ TEST(FlowSynthesis, Merge) {
 }
 
 
-TEST(FlowSynthesis, Split) {
+TEST(ChpToFlow, Split) {
 	flow::Func func;
 	func.name = "split";
 	Operand L = func.pushNet("L", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
@@ -221,28 +221,28 @@ TEST(FlowSynthesis, Split) {
 }
 
 
-TEST(FlowSynthesis, IsEven) {
+TEST(ChpToFlow, IsEven) {
 	flow::Func func;
 	func.name = "is_even";
 	testFuncSynthesisFromCHP(func);
 }
 
 
-TEST(FlowSynthesis, Primes) {
+TEST(ChpToFlow, Primes) {
 	flow::Func func;
 	func.name = "primes";
 	testFuncSynthesisFromCHP(func);
 }
 
 
-TEST(FlowSynthesis, TrafficLight) {
+TEST(ChpToFlow, TrafficLight) {
 	flow::Func func;
 	func.name = "traffic_light";
 	testFuncSynthesisFromCHP(func);
 }
 
 
-TEST(FlowSynthesis, DSAdderFlat) {
+TEST(ChpToFlow, DSAdderFlat) {
 	flow::Func func;
 	func.name = "ds_adder_flat";
 	Operand Ad = func.pushNet("Ad", Type(Type::FIXED, WIDTH), flow::Net::IN);
@@ -293,8 +293,7 @@ TEST(FlowSynthesis, DSAdderFlat) {
 	testFuncSynthesisFromCHP(func);
 }
 
-
-TEST(FlowSynthesis, DSAdder) {
+TEST(ChpToFlow, DSAdder) {
 	Func func;
 	func.name = "ds_adder";
 
