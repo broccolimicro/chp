@@ -185,9 +185,12 @@ namespace chp {
 			if (!new_split_groups.empty()) {
 				for (const petri::split_group &split_group : new_split_groups) {
 
-					//TODO: Assumes there's one & always at least one transition here
-					//TODO: Maybe include final transition id to cleanly detect cycle
-					splits[split_group.split].insert(split_group.branch[0]);
+					if (!split_group.branch.empty()) {
+						splits[split_group.split].insert(split_group.branch[0]);
+
+					} else {
+						cerr << "ERROR: a split_group with no branches! " << split_group.to_string() << endl;
+					}
 				}
 			}
 		}
