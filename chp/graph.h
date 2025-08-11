@@ -2,7 +2,8 @@
 
 #include <common/standard.h>
 #include <common/net.h>
-#include <arithmetic/action.h>
+#include <arithmetic/operation.h>
+#include <boolean/cover.h>
 #include <petri/graph.h>
 
 #include "state.h"
@@ -92,8 +93,12 @@ struct transition : petri::transition
 	transition(arithmetic::Expression guard, arithmetic::Choice assign=true);
 	~transition();
 
-	arithmetic::Expression guard;
-	arithmetic::Choice action;
+	// uid is -1 if this transition does not assign any value. Either way, the guard (represented by the expr) must be satisfied
+	int uid;
+
+	// skip is ident(true)
+	// stop is ident(false)
+	arithmetic::Operation expr;
 
 	static transition merge(int composition, const transition &t0, const transition &t1);
 	static bool mergeable(int composition, const transition &t0, const transition &t1);
@@ -115,8 +120,7 @@ struct variable {
 	vector<int> remote;
 };
 
-struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
-{
+struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state> {
 	typedef petri::graph<chp::place, chp::transition, petri::token, chp::state> super;
 
 	graph();
@@ -130,6 +134,12 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	int netIndex(string name) const;
 	string netAt(int uid) const;
 	int netCount() const;
+
+	vector<arithmetic::Operand> exprIndex() const;
+	const arithmetic::Operation *getExpr(size_t index) const;
+	bool setExpr(arithmetic::Operation o);
+	arithmetic::Operand pushExpr(arithmetic::Operation o);
+	bool eraseExpr(size_t index);
 
 	using super::create;
 	int create(variable n = variable());

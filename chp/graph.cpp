@@ -38,13 +38,14 @@ ostream &operator<<(ostream &os, const place &p) {
 }
 
 transition::transition() {
-	guard = arithmetic::Expression::boolOf(true);
-	action = true;
+	uid = -1;
+	// initialize as a skip
+	expr = arithmetic::Operation(arithmetic::Operation::IDENTITY, {Operand::boolOf(true)});
 }
 
-transition::transition(arithmetic::Expression guard, arithmetic::Choice assign) {
-	this->guard = guard;
-	this->action = assign;
+transition::transition(int uid, arithmetic::Operation expr) {
+	this->uid = uid;
+	this->expr = expr;
 }
 
 transition::~transition()
@@ -52,44 +53,35 @@ transition::~transition()
 
 }
 
-transition transition::merge(int composition, const transition &t0, const transition &t1)
-{
-	transition result;
-	if (composition == petri::parallel or composition == petri::sequence)
-	{
-		for (int i = 0; i < (int)t0.action.terms.size(); i++)
-			for (int j = 0; j < (int)t1.action.terms.size(); j++)
-			{
-				result.action.terms.push_back(arithmetic::Parallel());
-				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t0.action.terms[i].actions.begin(), t0.action.terms[i].actions.end());
-				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t1.action.terms[j].actions.begin(), t1.action.terms[j].actions.end());
-			}
+transition transition::merge(int composition, const transition &t0, const transition &t1) {
+	if (t0.is_vacuous()) {
+		return t1;
+	} else if (t1.is_vacuous()) {
+		return t0;
 	}
-	else if (composition == petri::choice)
-	{
-		result.action.terms.insert(result.action.terms.end(), t0.action.terms.begin(), t0.action.terms.end());
-		result.action.terms.insert(result.action.terms.end(), t1.action.terms.begin(), t1.action.terms.end());
-	}
-	return result;
+	return transition();
 }
 
-bool transition::mergeable(int composition, const transition &t0, const transition &t1)
-{
-	return true;
+bool transition::mergeable(int composition, const transition &t0, const transition &t1) {
+	return t0.is_vacuous() or t1.is_vacuous();
 }
 
-bool transition::is_infeasible()
-{
-	return guard.isNull() or action.isInfeasible();
+bool transition::is_infeasible() {
+	return expr.func == arithmetic::Operation::IDENTITY
+		and expr.operands.size() == 1u
+		and expr.operands[0].isConst()
+		and expr.operands[0].cnst.isNeutral();
 }
 
-bool transition::is_vacuous()
-{
-	return guard.isConstant() and action.isVacuous();
+bool transition::is_vacuous() {
+	return expr.func == arithmetic::Operation::IDENTITY
+		and expr.operands.size() == 1u
+		and expr.operands[0].isConst()
+		and expr.operands[0].cnst.isValid();
 }
 
 ostream &operator<<(ostream &os, const transition &t) {
-	os << t.guard << "->" << t.action;
+	os << t.expr << " -> v" << t.uid << "=" << t.expr.op();
 	return os;
 }
 
@@ -199,6 +191,38 @@ string graph::netAt(int uid) const {
 
 int graph::netCount() const {
 	return (int)vars.size();
+}
+
+vector<arithmetic::Operand> graph::exprIndex() const {
+	vector<arithmetic::Operand> result;
+	for (auto i = transitions.begin(); i != transitions.end(); i++) {
+		if (not i->expr.isUndef()) {
+			result.push_back(i->op());
+		}
+	}
+	return result;
+}
+
+// I need an efficient way to map expressions to transitions
+// that can be updated...
+const arithmetic::Operation *graph::getExpr(size_t index) const {
+	return &transitions[index].expr;
+}
+
+bool graph::setExpr(Operation o) {
+	if (o.exprIndex >= transitions.size()) {
+		// TODO(edward.bingham) create a new transition
+	}
+	transitions[o.exprIndex].expr = o;
+	return true;
+}
+
+Operand graph::pushExpr(Operation o) {
+	return Operand::undef();
+}
+
+bool graph::eraseExpr(size_t index) {
+	return false;
 }
 
 /**
