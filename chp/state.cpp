@@ -47,7 +47,7 @@ enabled_transition::~enabled_transition()
 
 string enabled_transition::to_string(const graph &g)
 {
-	return "T" + ::to_string(index) + ":" + export_expression(g.transitions[index].guard, g).to_string() + " -> " + export_composition(g.transitions[index].action, g).to_string();
+	return "T" + ::to_string(index) + ":" + export_expression(g.transitions[index].expr, g).to_string() + " -> " + export_composition(g.transitions[index].action, g).to_string();
 }
 
 bool operator<(enabled_transition i, enabled_transition j)

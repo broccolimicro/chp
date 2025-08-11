@@ -139,7 +139,7 @@ simulator::~simulator() {
 // that this marking enabled and the term of each transition
 // that's enabled.
 int simulator::enabled(bool sorted) {
-	if (base == NULL) {
+	/*if (base == NULL) {
 		internal("", "NULL pointer to simulator::base", __FILE__, __LINE__);
 		return 0;
 	}
@@ -306,7 +306,7 @@ int simulator::enabled(bool sorted) {
 			for (int j = 0; j < (int)preload[i].tokens.size(); j++) {
 				preload[i].depend = preload[i].depend & tokens[preload[i].tokens[j]].guard;
 			}
-			preload[i].guard = base->transitions[preload[i].index].guard & base->transitions[preload[i].index].action.guard();
+			preload[i].guard.append(arithmetic::subExpr(base-> = base->transitions[preload[i].index].guard & base->transitions[preload[i].index].action.guard();
 
 			//preload[i].depend.hide(base->transitions[preload[i].index].local_action.vars());
 		
@@ -427,14 +427,13 @@ int simulator::enabled(bool sorted) {
 		if (not loaded[i].vacuous) {
 			ready.push_back(i);
 		}
-	}
+	}*/
 
 	return ready.size();
 }
 
-enabled_transition simulator::fire(int index)
-{
-	if (base == NULL)
+enabled_transition simulator::fire(int index) {
+	/*if (base == NULL)
 	{
 		internal("", "NULL pointer to simulator::base", __FILE__, __LINE__);
 		return enabled_transition();
@@ -609,7 +608,7 @@ enabled_transition simulator::fire(int index)
 		loaded[i].history.push_back(t.index);
 	}
 
-	return t;
+	return t;*/
 }
 
 void simulator::merge_errors(const simulator &sim)
