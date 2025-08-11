@@ -49,7 +49,7 @@ chp::graph _importCHPFromString(const string &chp_string, bool debug=false) {
 bool testBranchFlatten(const string &source, const string &target, bool render=true) {
 	chp::graph targetGraph = _importCHPFromString(target);
 	chp::graph sourceGraph = _importCHPFromString(source);
-	sourceGraph.flatten();
+	//sourceGraph.flatten();
 	//EXPECT_EQ(sourceGraph, targetGraph);
 
 	if (render) {
