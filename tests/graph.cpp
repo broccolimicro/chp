@@ -49,23 +49,29 @@ chp::graph _importCHPFromString(const string &chp_string, bool debug=false) {
 bool testBranchFlatten(const string &source, const string &target, bool render=true) {
 	chp::graph targetGraph = _importCHPFromString(target);
 	chp::graph sourceGraph = _importCHPFromString(source);
-	//sourceGraph.flatten();
-	//EXPECT_EQ(sourceGraph, targetGraph);
+
+	const ::testing::TestInfo* const test_info =
+			::testing::UnitTest::GetInstance()->current_test_info();
+	std::string test_suite_name = test_info->test_suite_name();
+	std::string test_name = test_info->name();
 
 	if (render) {
-    const ::testing::TestInfo* const test_info =
-        ::testing::UnitTest::GetInstance()->current_test_info();
-
-    std::string test_suite_name = test_info->test_suite_name();
-    std::string test_name = test_info->name();
-
-
 		string filenameWithoutExtension = (TEST_DIR / ("_in_" + test_name)).string();
 		string graphvizRaw = chp::export_graph(sourceGraph, true).to_string();
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 
 		filenameWithoutExtension = (TEST_DIR / ("_out_" + test_name)).string();
 		graphvizRaw = chp::export_graph(targetGraph, true).to_string();
+		gvdot::render(filenameWithoutExtension, graphvizRaw);
+	}
+
+	sourceGraph.flatten();
+	//sourceGraph.post_process(true, false);
+	//EXPECT_EQ(sourceGraph, targetGraph);
+
+	if (render) {
+		string filenameWithoutExtension = (TEST_DIR / ("_mid_" + test_name)).string();
+		string graphvizRaw = chp::export_graph(sourceGraph, true).to_string();
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 	}
 
