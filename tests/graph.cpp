@@ -153,6 +153,51 @@ TEST(BranchFlatten, Decoder3) {
 }
 
 
+TEST(BranchFlatten, Decoder3E) {
+	std::string source = R"(
+*[
+	[   b2 -> depth=2;
+		[   b1 -> depth=1;
+			[   b0 -> depth=0; out7!v
+			[] ~b0 -> depth=0; out6!v
+			]
+		[] ~b1 -> depth=1;
+			[   b0 -> depth=0; out5!v
+			[] ~b0 -> depth=0; out4!v
+			]
+		]
+	[] ~b2 -> depth=2;
+		[  b1 -> depth=1;
+			[   b0 -> depth=0; out3!v
+			[] ~b0 -> depth=0; out2!v
+			]
+		[] ~b1 -> depth=1;
+			[   b0 -> depth=0; out1!v
+			[] ~b0 -> depth=0; out0!v
+			]
+		]
+	]
+]
+		)";
+
+	std::string target = R"(
+*[
+  [  ( b2 &  b1 &  b0) -> out7!v
+  [] ( b2 &  b1 & ~b0) -> out6!v
+  [] ( b2 & ~b1 &  b0) -> out5!v
+  [] ( b2 & ~b1 & ~b0) -> out4!v
+  [] (~b2 &  b1 &  b0) -> out3!v
+  [] (~b2 &  b1 & ~b0) -> out2!v
+  [] (~b2 & ~b1 &  b0) -> out1!v
+  [] (~b2 & ~b1 & ~b0) -> out0!v
+  ]
+]
+		)";
+
+	EXPECT_TRUE(testBranchFlatten(source, target));
+}
+
+
 TEST(BranchFlatten, Decoder4) {
 	std::string source = R"(
 *[
@@ -289,6 +334,72 @@ TEST(BranchFlatten, DSAdder) {
 	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
 	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?
 	]
+]
+		)";
+
+	EXPECT_TRUE(testBranchFlatten(source, target));
+}
+
+
+TEST(BranchFlatten, Collatz) {
+	std::string source = R"(
+*[n=N?;
+	*[n ~= 1 -> log!nope;
+		*[n ~= 1 && n < 100 ->
+			[n % 2 == 0 -> log!n; n = n / 2
+			[] n % 2 ~= 0 -> log!n; n = 3 * n + 1
+			]
+		]
+	];
+	log!done
+]
+		)";
+
+	std::string target = R"(
+*[n=N?;
+	*[n>0 -> log!n; n=n- 1];
+	log!0
+]
+		)";
+
+	EXPECT_TRUE(testBranchFlatten(source, target));
+}
+
+
+TEST(BranchFlatten, IsPrime) {
+	std::string source = R"(
+n = N?;
+*[ n < 20 ->
+    isPrime = true;
+    i = 2;
+    *[ i < n ->
+        [ n % i == 0 -> isPrime = false
+        [] n % i ~= 0 -> skip
+        ];
+        i = i + 1
+    ];
+    [ isPrime -> out!n
+    [] ~isPrime -> skip
+    ];
+    n = n + 1
+]
+		)";
+
+	std::string target = R"(
+n = N?;
+*[ n < 20 ->
+    isPrime = true;
+    i = 2;
+    *[ i < n ->
+        [ n % i == 0 -> isPrime = false
+        [] n % i ~= 0 -> skip
+        ];
+        i = i + 1
+    ];
+    [ isPrime -> out!n
+    [] ~isPrime -> skip
+    ];
+    n = n + 1
 ]
 		)";
 
