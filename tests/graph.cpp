@@ -296,15 +296,15 @@ TEST(BranchFlatten, Counter) {
 
 	std::string target = R"(
 *[lc=Lc?;
-	[  lc==inc ^ v==0 -> v=1
-	[] lc==inc ^ v==1 -> v=2
-	[] lc==inc ^ v==2 -> v=3
-	[] lc==inc ^ v==3 -> v=0; Rc!inc; vz=Rz?
-	[] lc==dec ^ v==0 -> v=3; Rc!dec; vz=Rz?
-	[] lc==dec ^ v==1 -> v=0
-	[] lc==dec ^ v==2 -> v=1
-	[] lc==dec ^ v==3 -> v=2
-	]; Lz!(v==0 ^ vz==1)
+	[  lc==inc && v==0 -> v=1
+	[] lc==inc && v==1 -> v=2
+	[] lc==inc && v==2 -> v=3
+	[] lc==inc && v==3 -> v=0; Rc!inc; vz=Rz?
+	[] lc==dec && v==0 -> v=3; Rc!dec; vz=Rz?
+	[] lc==dec && v==1 -> v=0
+	[] lc==dec && v==2 -> v=1
+	[] lc==dec && v==3 -> v=2
+	]; Lz!(v==0 && vz==1)
 ]
 		)";
 
