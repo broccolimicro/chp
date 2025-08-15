@@ -46,7 +46,7 @@ chp::graph _importCHPFromString(const string &chp_string, bool debug=false) {
 }
 
 
-bool testBranchFlatten(const string &source, const string &target, bool render=true) {
+bool testBranchFlatten(const string &source, const string &target, bool render=true, bool post_process=false) {
 	chp::graph targetGraph = _importCHPFromString(target);
 	chp::graph sourceGraph = _importCHPFromString(source);
 
@@ -54,6 +54,11 @@ bool testBranchFlatten(const string &source, const string &target, bool render=t
 			::testing::UnitTest::GetInstance()->current_test_info();
 	std::string test_suite_name = test_info->test_suite_name();
 	std::string test_name = test_info->name();
+
+	if (post_process) {
+		sourceGraph.post_process(true, false);
+		targetGraph.post_process(true, false);
+	}
 
 	if (render) {
 		string filenameWithoutExtension = (TEST_DIR / ("_in_" + test_name)).string();
@@ -66,7 +71,8 @@ bool testBranchFlatten(const string &source, const string &target, bool render=t
 	}
 
 	sourceGraph.flatten();
-	//sourceGraph.post_process(true, false);
+	
+	if (post_process) { sourceGraph.post_process(true, false); }
 	//EXPECT_EQ(sourceGraph, targetGraph);
 
 	if (render) {
@@ -76,6 +82,27 @@ bool testBranchFlatten(const string &source, const string &target, bool render=t
 	}
 
 	return false;
+}
+
+
+TEST(BranchFlatten, Split) {
+	std::string source = R"(
+*[c=C?;
+	[ c==0 -> x=L?; A!x
+	[] c==1 -> x=L?; B!x
+	]
+]
+		)";
+
+	std::string target = R"(
+*[c=C?;
+	[ c==0 -> x=L?; A!x
+	[] c==1 -> x=L?; B!x
+	]
+]
+		)";
+
+	EXPECT_TRUE(testBranchFlatten(source, target));
 }
 
 
@@ -329,7 +356,37 @@ TEST(BranchFlatten, DSAdder) {
 *[ s = (Ad + Bd + ci) % pow(2, N);
 	co = (Ad + Bd + ci) / pow(2, N);
 	[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?
-  [] Ac & !Bc -> Sc!0,Sd!s; ci=co; Bc?, Bd?
+  [] Ac & !Bc -> Sc!0,Sd!s; ci=ci; Bc?, Bd?
+  [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?
+	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
+	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?
+	]
+]
+		)";
+
+	EXPECT_TRUE(testBranchFlatten(source, target));
+}
+
+
+TEST(BranchFlatten, LoopdyLoop) {
+	std::string source = R"(
+*[ s = (Ad + Bd + ci) % pow(2, N);
+	co = (Ad + Bd + ci) / pow(2, N);
+	[ !Ac | !Bc -> Sc!0,Sd!s; *[ ci=co;
+			[ !Ac -> A? [] else -> skip ],
+			[ !Bc -> B? [] else -> skip ]
+		]
+	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
+	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; A?, B?
+	]
+]
+		)";
+
+	std::string target = R"(
+*[ s = (Ad + Bd + ci) % pow(2, N);
+	co = (Ad + Bd + ci) / pow(2, N);
+	[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?
+  [] Ac & !Bc -> Sc!0,Sd!s; ci=ci; Bc?, Bd?
   [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?
 	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
 	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?
