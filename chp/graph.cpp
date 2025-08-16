@@ -1,10 +1,10 @@
 #include "graph.h"
+
+#include <arithmetic/expression.h>
 #include <common/message.h>
 #include <common/text.h>
 #include <common/mapping.h>
-
 #include <chp/simulator.h>
-
 #include <interpret_arithmetic/export.h>
 
 namespace chp
@@ -527,7 +527,7 @@ void graph::decompose() {
 	// 3. Document as needed
 }
 
-void expand() {
+void graph::expand() {
 	// TODO Handshake Expansion and Reshuffling
 	//
 	// The goal of this project is given a CHP circuit specification, break that
@@ -570,6 +570,320 @@ void expand() {
 	// 1. Clean up any bugs
 	// 2. Prepare demo
 	// 3. Document as needed
+}
+
+void graph::flatten() {
+	cout << "¿Yµ wWµøT?" << endl;
+
+	if (!this->split_groups_ready) {
+		this->compute_split_groups();
+	}
+
+	// Place index of split -> transition indices
+	//TODO: replace indices w/ iterators
+	std::map<int, std::set<int>> split_places;
+
+	// TODO: extract this directly from graph, which was already traversed
+	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+		//const petri::transition &transition = this->transitions[transition_idx];
+
+		// Identify split groups
+		petri::iterator it(petri::transition::type, (int)transition_idx);
+		const vector<petri::split_group> &new_split_groups = this->split_groups_of(
+				petri::composition::choice, it);
+
+		if (!new_split_groups.empty()) {
+			for (const petri::split_group &split_group : new_split_groups) {
+
+				if (!split_group.branch.empty()) {
+					split_places[split_group.split].insert(split_group.branch[0]);
+
+				} else {
+					cerr << "ERROR: a split_group with no branches! " << split_group.to_string() << endl;
+				}
+			}
+		}
+	}
+	//TODO: simpler implementation: traverse all places & filter for those with next()'s > 1
+	//TODO: Is my earlier "split_places" definition at least more performant? Prioritize readability
+
+	if (split_places.empty()) {
+		//TODO: what if no splits? already flattened? Brainstorm example
+		// aha! e.g. see ds_adder_flat where shared transitions need to be duplicated (s & co assignment)
+		return;
+	}
+
+	// Split-place adjacency list
+	std::map<petri::iterator, std::set<petri::iterator> > monopartite_split_projection;
+
+	// Transition index of split child -> connected splits
+	//std::map<petri::iterator, std::set<petri::iterator> > split_ancestors;
+
+	// Transition index of split child -> all transition indices until next split or halt
+	std::map<petri::iterator, std::vector<petri::iterator>> transition_sequences;
+
+	// Project out a subgraph of only the directed ins&outs between place-based splits
+	// Also identify trailing children (sequences of transitions) to be merged
+	for (const auto &[place_idx, transition_idxs] : split_places) {
+		for (const auto &split_transition_idx : transition_idxs) {
+			std::set<petri::iterator> transition_sequence_members;
+			std::vector<petri::iterator> transition_sequence;
+
+			//TODO: create a bound (petri/iterator.h)? (collection of regions composed in choice)
+			//TODO: for split_transition_idx, crawl breadth-first & acquire every transition_idx until split-places or last transition
+			petri::iterator curr(transition::type, split_transition_idx);
+			//cout << endl << "====> " << curr.to_string();
+
+			// Breadth-first search from transition to all ends, stopping at other split-places
+			std::set<petri::iterator> visited;
+			std::queue<petri::iterator> queue;
+			queue.push(curr);
+			while (not queue.empty()) {
+				curr = queue.front();
+				queue.pop();
+				visited.insert(curr);
+				//cout << endl << "[" << curr.to_string() << "] -> ";
+
+				for (const petri::iterator &next_place_it : this->next(curr)) {
+
+					// Halt at other split-places
+					if (split_places.contains(next_place_it.index)) {
+						petri::iterator parent_split(place::type, place_idx);
+						//// Ignore circular self-references? No, useful info for dominance calculation later ...just skip when modifying graph
+						//if (next_place_it == parent_split) { continue; }
+						monopartite_split_projection[next_place_it].insert(parent_split);
+
+						//cout << endl << "-=-=-" << next_place_it.to_string() << "-=-=-";
+						//std::set<petri::iterator> split_neighbors = monopartite_split_projection[next_place_it];
+						//std::copy(split_neighbors.begin(), split_neighbors.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+						//cout << "-=-=-" << endl;
+						continue;
+					}
+
+					for (const petri::iterator &next_transition_it : this->next(next_place_it)) {
+						//TODO: store all split_transitions in a set for quicker lookup to halt crawl
+						if (visited.contains(next_transition_it)) { continue; }
+						queue.push(next_transition_it);
+
+						//cout << next_transition_it.to_string() << " ";
+						if (!transition_sequence_members.contains(next_transition_it)) {
+							transition_sequence_members.insert(next_transition_it);
+							transition_sequence.push_back(next_transition_it);
+						}
+					}
+				}
+			}
+
+			petri::iterator split_transition_it(transition::type, split_transition_idx);
+			transition_sequences[split_transition_it] = transition_sequence;
+		}
+	}
+
+	auto print_map = [](const auto &m) {
+		for (const auto &[key, values] : m) { cout << key << ": {";
+			for (auto it = values.begin(); it != values.end(); ++it) {
+				cout << *it; if (std::next(it) != values.end()) { cout << ", "; }
+			} cout << "}" << std::endl; } cout << endl; };
+
+	print_map(split_places);
+	print_map(monopartite_split_projection);
+	print_map(transition_sequences);
+
+	// Identify most dominant split
+	auto dominance(this->split_dominance());
+	//TODO: compute dominance can be handled in a helper (e.g. this->compute_dominance() & this->dominance_ready w/ dominance relation AND dominance frontiers)
+	//TODO: max(in_degree) feels more proper, but is this sufficient?
+	int most_dominant_split_place = -1;  //TODO: replace with proper petri::iterator
+	size_t greatest_out_degree = 0;
+
+	for (const auto &[split_place, out_neighbors] : monopartite_split_projection) {
+		size_t out_degree = out_neighbors.size();
+
+		if (out_degree > greatest_out_degree 
+				|| (out_degree == greatest_out_degree && split_place.index < most_dominant_split_place)) {
+			greatest_out_degree = out_degree;
+			most_dominant_split_place = split_place.index;
+		}
+	}
+	cout << endl << "][][][][  DOM> " << most_dominant_split_place << endl << endl;
+	petri::iterator dominator(place::type, most_dominant_split_place);
+
+	//TODO: each of these big comments could be a helper
+	// From "dominator" split, iteratively merge child splits by depth
+	//TODO: durr, you gotta start bottom-up
+	while (monopartite_split_projection.size() > 1) {
+
+		// Flatten one level of nesting split-places
+		for (const petri::iterator &place_to_merge : monopartite_split_projection[dominator]) {
+
+			// Skip circular self-references
+			if (place_to_merge == dominator) { continue; }
+			cout << endl << "====> PLACE_TO_MERGE> " << place_to_merge.to_string() << endl;
+
+			// Identify parent(s) transition_sequence to concatenate with
+			//TODO: might need non-const to mutate
+			for (const petri::iterator &in_transition : this->prev(place_to_merge)) {
+				cout << "in_transition> " << in_transition.to_string() << endl << endl;
+				for (const auto &[parent_sequence_head, parent_sequence] : transition_sequences) {
+					// Concatenate the predicates, then concatenate the transition sequences (even dropping the sequence&split from their respective maps)
+
+					if (parent_sequence.empty()) {
+						if (parent_sequence_head != in_transition) { continue; }
+						// Found a lone parent head/predicate with no body to merge with!
+
+						//TODO: Don'tRepeatYourself: copied from the more involved sequence concatenation after
+						arithmetic::Expression parent_predicate = this->transitions[parent_sequence_head.index].guard;
+
+						for (const petri::iterator &child_transition : this->next(place_to_merge)) {
+							cout << "PARENT_HEAD> " << parent_sequence_head.to_string() << endl;
+							cout << " CHILD_HEAD> " << child_transition.to_string() << endl << endl;
+
+							arithmetic::Expression child_predicate = this->transitions[child_transition.index].guard;
+							cout << "P_predicate> " << parent_predicate.to_string();
+							cout << "C_predicate> " << child_predicate.to_string();
+
+							// Concatenate the predicates
+							//TODO: logical <-> bitwise decision needed?
+							arithmetic::Expression merged_predicate = parent_predicate && child_predicate;
+							cout << "M_predicate> " << merged_predicate.to_string() << endl;
+							//merged_predicate.minimize(); //TODO: !!! What petri::graph vars/etc need to be updated on modification (e.g. info deleted & added)
+
+							cout << "(empty parent_body)> ";
+							vector<petri::iterator> child_sequence = transition_sequences[child_transition];
+							std::copy(child_sequence.begin(), child_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+							cout << endl;
+
+							//TODO: splice out in+out arcs to parent_sequence_head
+							for (const auto &parent_in_arc :  this->in(parent_sequence_head)) {
+								this->erase_arc(parent_in_arc);
+							}
+
+							// Create graph copies of desired sequences
+							//TODO: but that'll over-sequentialize tiny sub-parallelism within branch ( but we'll reconstruct it when we analyze it anyways)
+							//TODO: can we copy a region or bound?
+							petri::iterator new_head = this->create(transition::type);
+							transition *new_transition = &this->transitions[new_head.index];
+							new_transition->guard = merged_predicate;
+							this->connect(dominator, new_head);
+
+							vector<petri::iterator> new_sequence = this->copy(child_sequence);
+							this->connect(new_sequence);
+							cout << "NEW> ";
+							std::copy(new_sequence.begin(), new_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+							cout << endl << endl;
+
+							// Attach new sequence/branch where parent used to be
+							this->connect(new_head, new_sequence.front());
+							this->connect(new_sequence.back(), dominator);
+						}
+						continue; // don't proceed to full-parent search if parent_sequence.empty()! Find a better way to merge these 2 cases
+					}
+
+					// Found a full parent (head/predicate AND body > 0) to flatten/concatente!
+					//TODO: merge_transition_sequences or something more composable would be a great DRY helper function
+					if (parent_sequence.back() == in_transition) {
+						//TODO: is transition.guard unique to chp::transition and not petri?? ah, piped in through template
+						arithmetic::Expression parent_predicate = this->transitions[parent_sequence_head.index].guard;
+
+						for (const petri::iterator &child_transition : this->next(place_to_merge)) {
+							cout << "PARENT_HEAD> " << parent_sequence_head.to_string() << endl;
+							cout << " CHILD_HEAD> " << child_transition.to_string() << endl << endl;
+
+							arithmetic::Expression child_predicate = this->transitions[child_transition.index].guard;
+							cout << "P_predicate> " << parent_predicate.to_string();
+							cout << "C_predicate> " << child_predicate.to_string();
+
+							// Concatenate the predicates
+							//TODO: logical <-> bitwise decision needed?
+							arithmetic::Expression merged_predicate = parent_predicate && child_predicate;
+							cout << "M_predicate> " << merged_predicate.to_string() << endl;
+							//merged_predicate.minimize(); //TODO: !!! What petri::graph vars/etc need to be updated on modification (e.g. info deleted & added)
+																					 //TODO: petri/tests/graph.cpp::flatten
+																					 //TODO: merge branches with logically-equivalent predicates
+
+																					 // Concatenate the transition sequences
+																					 //TODO: be mindful of what labels/etc are duplicated/copied or referenced
+							vector<petri::iterator> merged_sequence(parent_sequence);
+							vector<petri::iterator> child_sequence = transition_sequences[child_transition];
+							merged_sequence.insert(merged_sequence.end(), child_sequence.begin(), child_sequence.end());
+
+							cout << "MERGED> ";
+							std::copy(merged_sequence.begin(), merged_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+							cout << endl;
+
+							//TODO: splice out in+out arcs to parent_sequence_head
+							for (const auto &parent_in_arc :  this->in(parent_sequence_head)) {
+								this->erase_arc(parent_in_arc); //TODO: NONONO MODIFIYING THE LIST YOU'RE ITERATING OVER
+							}
+
+							// Create graph copies of desired sequences
+							//TODO: but that'll over-sequentialize tiny sub-parallelism within branch ( but we'll reconstruct it when we analyze it anyways)
+							//TODO: can we copy a region or bound?
+							petri::iterator new_head = this->create(transition::type);
+							transition *new_transition = &this->transitions[new_head.index];
+							new_transition->guard = merged_predicate;
+							this->connect(dominator, new_head);
+
+							vector<petri::iterator> new_sequence = this->copy(merged_sequence);
+							this->connect(new_sequence);
+							cout << "NEW> ";
+							std::copy(new_sequence.begin(), new_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+							cout << endl << endl;
+
+							// Attach new sequence/branch where parent used to be
+							this->connect(new_head, new_sequence.front());
+							//TODO: only connect if monopartite projection terminates or include dominator
+							this->connect(new_sequence.back(), dominator);
+						}
+
+						break;
+					}
+				}
+			}
+
+			//bound trail = bound::from_nodes({dominator, place_to_merge});
+			//std::copy(trail.begin(), trail.end(), std::ostream_iterator<region>(cout, " "));
+			//cout << " -=-=- " << trail.to_string() << endl;
+		}
+
+		//TODO:
+
+		break; //TODO: just for debugging
+	}
+
+	// Is the dominator in the reset? if not, march to marking & unzip to dominator
+	//TODO: handle pre-disconnected start-up sequence (shuffle on to each branch)
+	state &marking = this->reset[0];  //TODO: handle multiple resets in this->reset?
+	int start_idx = marking.tokens[0].index; //TODO: handle multi-token markings
+	petri::iterator start(place::type, start_idx);
+
+	cout << endl << endl << "=== RESET>" << start.to_string() << endl;
+	set<petri::iterator> visited;
+	visited.insert(start);
+	while (start != dominator) {
+
+		petri::iterator next = this->unzip_forwards(start);
+		cout << next.to_string() << " ";
+
+		if (visited.contains(next)) { break; }  // Detect cycles
+		if (visited.size() > 64) { break; }  //HACK: detect runaway bug
+		visited.insert(next);
+		start = next;
+	}
+
+	if (marking.tokens.size() > 1) {
+		marking.tokens.erase(marking.tokens.begin(), marking.tokens.end() - 1);
+		this->reset.erase(this->reset.begin() + 1, this->reset.end());
+	}
+	cout << endl;
+
+	// Recompute split groups after flattening
+	//this->mark_modified();
+	this->post_process(true, false);
+	this->split_groups_ready = false;
+	this->compute_split_groups();
+
+	cout << "¡Yµ wWµøT!" << endl;
 }
 
 arithmetic::Expression graph::exclusion(int index) const {

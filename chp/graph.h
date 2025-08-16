@@ -146,6 +146,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void post_process(bool proper_nesting = false, bool aggressive = false);
 	void decompose();
 	void expand();
+	void flatten();
 	arithmetic::Expression exclusion(int index) const;
 };
 
