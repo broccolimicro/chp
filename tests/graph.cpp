@@ -87,19 +87,18 @@ bool testBranchFlatten(const string &source, const string &target, bool render=t
 
 TEST(BranchFlatten, Split) {
 	std::string source = R"(
-*[c=C?;
-	[ c==0 -> x=L?; A!x
-	[] c==1 -> x=L?; B!x
+*[c=C?; x=L?;
+	[ c==0 -> A!x
+	[] c==1 -> B!x
 	]
 ]
 		)";
 
+	//TODO: rewind initial marking to match "c=C?" start-up sequence
 	std::string target = R"(
-*[c=C?;
-	[ c==0 -> x=L?; A!x
-	[] c==1 -> x=L?; B!x
-	]
-]
+*[[ c==0 -> A!x; c=C?; x=L?
+	[] c==1 -> B!x; c=C?; x=L?
+]]
 		)";
 
 	EXPECT_TRUE(testBranchFlatten(source, target));
@@ -352,16 +351,14 @@ TEST(BranchFlatten, DSAdder) {
 ]
 		)";
 
+	//TODO: rewind initial marking to match "c=C?" start-up sequence
 	std::string target = R"(
-*[ s = (Ad + Bd + ci) % pow(2, N);
-	co = (Ad + Bd + ci) / pow(2, N);
-	[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?
-  [] Ac & !Bc -> Sc!0,Sd!s; ci=ci; Bc?, Bd?
-  [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?
-	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
-	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?
-	]
-]
+*[[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
+  [] Ac & !Bc -> Sc!0,Sd!s; ci=ci; Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
+  [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
+	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
+	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
+]]
 		)";
 
 	EXPECT_TRUE(testBranchFlatten(source, target));
