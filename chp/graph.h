@@ -143,10 +143,11 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	using super::merge;
 	petri::mapping merge(graph g);
 
-	void post_process(bool proper_nesting = false, bool aggressive = false);
+	void post_process(bool proper_nesting=false, bool aggressive=false);
 	void decompose();
 	void expand();
-	void flatten();
+	void flatten(bool debug=false);
+	//bool isFlat();  //TODO: cache in property for quick look-up
 	arithmetic::Expression exclusion(int index) const;
 };
 

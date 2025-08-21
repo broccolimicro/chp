@@ -572,8 +572,8 @@ void graph::expand() {
 	// 3. Document as needed
 }
 
-void graph::flatten() {
-	cout << "¿Yµ wWµøT?" << endl;
+void graph::flatten(bool debug) {
+	if (debug) { cout << "¿Yµ wWµøT?" << endl; }
 
 	if (!this->split_groups_ready) {
 		this->compute_split_groups();
@@ -685,9 +685,11 @@ void graph::flatten() {
 				cout << *it; if (std::next(it) != values.end()) { cout << ", "; }
 			} cout << "}" << std::endl; } cout << endl; };
 
-	print_map(split_places);
-	print_map(monopartite_split_projection);
-	print_map(transition_sequences);
+	if (debug) {
+		print_map(split_places);
+		print_map(monopartite_split_projection);
+		print_map(transition_sequences);
+	}
 
 	// Identify most dominant split
 	auto dominance(this->split_dominance());
@@ -705,7 +707,7 @@ void graph::flatten() {
 			most_dominant_split_place = split_place.index;
 		}
 	}
-	cout << endl << "][][][][  DOM> " << most_dominant_split_place << endl << endl;
+	if (debug) { cout << endl << "][][][][  DOM> " << most_dominant_split_place << endl << endl; }
 	petri::iterator dominator(place::type, most_dominant_split_place);
 
 	//TODO: each of these big comments could be a helper
@@ -718,12 +720,12 @@ void graph::flatten() {
 
 			// Skip circular self-references
 			if (place_to_merge == dominator) { continue; }
-			cout << endl << "====> PLACE_TO_MERGE> " << place_to_merge.to_string() << endl;
+			if (debug) { cout << endl << "====> PLACE_TO_MERGE> " << place_to_merge.to_string() << endl; }
 
 			// Identify parent(s) transition_sequence to concatenate with
 			//TODO: might need non-const to mutate
 			for (const petri::iterator &in_transition : this->prev(place_to_merge)) {
-				cout << "in_transition> " << in_transition.to_string() << endl << endl;
+				if (debug) { cout << "in_transition> " << in_transition.to_string() << endl << endl; }
 				for (const auto &[parent_sequence_head, parent_sequence] : transition_sequences) {
 					// Concatenate the predicates, then concatenate the transition sequences (even dropping the sequence&split from their respective maps)
 
@@ -735,23 +737,27 @@ void graph::flatten() {
 						arithmetic::Expression parent_predicate = this->transitions[parent_sequence_head.index].guard;
 
 						for (const petri::iterator &child_transition : this->next(place_to_merge)) {
-							cout << "PARENT_HEAD> " << parent_sequence_head.to_string() << endl;
-							cout << " CHILD_HEAD> " << child_transition.to_string() << endl << endl;
+							if (debug) {
+								cout << "PARENT_HEAD> " << parent_sequence_head.to_string() << endl;
+								cout << " CHILD_HEAD> " << child_transition.to_string() << endl << endl;
+							}
 
 							arithmetic::Expression child_predicate = this->transitions[child_transition.index].guard;
-							cout << "P_predicate> " << parent_predicate.to_string();
-							cout << "C_predicate> " << child_predicate.to_string();
+							if (debug) {
+								cout << "P_predicate> " << parent_predicate.to_string();
+								cout << "C_predicate> " << child_predicate.to_string();
+							}
 
 							// Concatenate the predicates
 							//TODO: logical <-> bitwise decision needed?
 							arithmetic::Expression merged_predicate = parent_predicate && child_predicate;
-							cout << "M_predicate> " << merged_predicate.to_string() << endl;
+							if (debug) { cout << "M_predicate> " << merged_predicate.to_string() << endl; }
 							//merged_predicate.minimize(); //TODO: !!! What petri::graph vars/etc need to be updated on modification (e.g. info deleted & added)
 
-							cout << "(empty parent_body)> ";
+							if (debug) { cout << "(empty parent_body)> "; }
 							vector<petri::iterator> child_sequence = transition_sequences[child_transition];
 							std::copy(child_sequence.begin(), child_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
-							cout << endl;
+							if (debug) { cout << endl; }
 
 							//TODO: splice out in+out arcs to parent_sequence_head
 							for (const auto &parent_in_arc :  this->in(parent_sequence_head)) {
@@ -768,9 +774,11 @@ void graph::flatten() {
 
 							vector<petri::iterator> new_sequence = this->copy(child_sequence);
 							this->connect(new_sequence);
-							cout << "NEW> ";
-							std::copy(new_sequence.begin(), new_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
-							cout << endl << endl;
+							if (debug) {
+								cout << "NEW> ";
+								std::copy(new_sequence.begin(), new_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+								cout << endl << endl;
+							}
 
 							// Attach new sequence/branch where parent used to be
 							this->connect(new_head, new_sequence.front());
@@ -786,17 +794,21 @@ void graph::flatten() {
 						arithmetic::Expression parent_predicate = this->transitions[parent_sequence_head.index].guard;
 
 						for (const petri::iterator &child_transition : this->next(place_to_merge)) {
-							cout << "PARENT_HEAD> " << parent_sequence_head.to_string() << endl;
-							cout << " CHILD_HEAD> " << child_transition.to_string() << endl << endl;
+							if (debug) {
+								cout << "PARENT_HEAD> " << parent_sequence_head.to_string() << endl;
+								cout << " CHILD_HEAD> " << child_transition.to_string() << endl << endl;
+							}
 
 							arithmetic::Expression child_predicate = this->transitions[child_transition.index].guard;
-							cout << "P_predicate> " << parent_predicate.to_string();
-							cout << "C_predicate> " << child_predicate.to_string();
+							if (debug) {
+								cout << "P_predicate> " << parent_predicate.to_string();
+								cout << "C_predicate> " << child_predicate.to_string();
+							}
 
 							// Concatenate the predicates
 							//TODO: logical <-> bitwise decision needed?
 							arithmetic::Expression merged_predicate = parent_predicate && child_predicate;
-							cout << "M_predicate> " << merged_predicate.to_string() << endl;
+							if (debug) { cout << "M_predicate> " << merged_predicate.to_string() << endl; }
 							//merged_predicate.minimize(); //TODO: !!! What petri::graph vars/etc need to be updated on modification (e.g. info deleted & added)
 																					 //TODO: petri/tests/graph.cpp::flatten
 																					 //TODO: merge branches with logically-equivalent predicates
@@ -807,9 +819,11 @@ void graph::flatten() {
 							vector<petri::iterator> child_sequence = transition_sequences[child_transition];
 							merged_sequence.insert(merged_sequence.end(), child_sequence.begin(), child_sequence.end());
 
-							cout << "MERGED> ";
-							std::copy(merged_sequence.begin(), merged_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
-							cout << endl;
+							if (debug) {
+								cout << "MERGED> ";
+								std::copy(merged_sequence.begin(), merged_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+								cout << endl;
+							}
 
 							//TODO: splice out in+out arcs to parent_sequence_head
 							for (const auto &parent_in_arc :  this->in(parent_sequence_head)) {
@@ -826,9 +840,11 @@ void graph::flatten() {
 
 							vector<petri::iterator> new_sequence = this->copy(merged_sequence);
 							this->connect(new_sequence);
-							cout << "NEW> ";
-							std::copy(new_sequence.begin(), new_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
-							cout << endl << endl;
+							if (debug) {
+								cout << "NEW> ";
+								std::copy(new_sequence.begin(), new_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+								cout << endl << endl;
+							}
 
 							// Attach new sequence/branch where parent used to be
 							this->connect(new_head, new_sequence.front());
@@ -857,13 +873,13 @@ void graph::flatten() {
 	int start_idx = marking.tokens[0].index; //TODO: handle multi-token markings
 	petri::iterator start(place::type, start_idx);
 
-	cout << endl << endl << "=== RESET>" << start.to_string() << endl;
+	if (debug) { cout << endl << endl << "=== RESET>" << start.to_string() << endl; }
 	set<petri::iterator> visited;
 	visited.insert(start);
 	while (start != dominator) {
 
 		petri::iterator next = this->unzip_forwards(start);
-		cout << next.to_string() << " ";
+		if (debug) { cout << next.to_string() << " "; }
 
 		if (visited.contains(next)) { break; }  // Detect cycles
 		if (visited.size() > 64) { break; }  //HACK: detect runaway bug
@@ -875,7 +891,7 @@ void graph::flatten() {
 		marking.tokens.erase(marking.tokens.begin(), marking.tokens.end() - 1);
 		this->reset.erase(this->reset.begin() + 1, this->reset.end());
 	}
-	cout << endl;
+	if (debug) { cout << endl; }
 
 	// Recompute split groups after flattening
 	//this->mark_modified();
@@ -883,7 +899,7 @@ void graph::flatten() {
 	this->split_groups_ready = false;
 	this->compute_split_groups();
 
-	cout << "¡Yµ wWµøT!" << endl;
+	if (debug) { cout << "¡Yµ wWµøT!" << endl; }
 }
 
 arithmetic::Expression graph::exclusion(int index) const {
