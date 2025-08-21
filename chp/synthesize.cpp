@@ -59,8 +59,8 @@ namespace chp {
 		for (const arithmetic::Operand &operand : e.exprIndex()) {
 			const arithmetic::Operation &operation = *e.getExpr(operand.index);
 
-			auto operand_is_var = [](const arithmetic::Operand& op) -> bool { return op.isVar(); };
-			auto operand_to_net = [&g](const arithmetic::Operand& op) -> std::string { return g.netAt(op.index); };
+			//auto operand_is_var = [](const arithmetic::Operand& op) -> bool { return op.isVar(); };
+			//auto operand_to_net = [&g](const arithmetic::Operand& op) -> std::string { return g.netAt(op.index); };
 
 			if (operation.func == arithmetic::Operation::OpType::TYPE_CALL) {
 				std::string func_name = operation.operands[0].cnst.sval;
@@ -163,81 +163,100 @@ namespace chp {
 
 		// Mapping from CHP variable indices to flow variable indices
 		mapping chp_to_flow_nets;
-		//auto set_or_get_flow_operand = [&chp_to_flow_nets](int flow_net) {};
 
-		// Place index of split -> transition indices
-		std::map<int, std::set<int>> splits;
+		// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
+		petri::iterator dominator;
 
-		// Identify all split groups
-		if (!g.split_groups_ready) {
-				g.compute_split_groups();
-		}
+		for (int place_idx = 0; place_idx < g.places.size(); place_idx++) {
+			petri::iterator place_it(place::type, place_idx);
 
-		// TODO: extract this directly from graph, which was already traversed
-		for (size_t i = 0; i < g.transitions.size(); i++) {
-			const chp::transition &transition = g.transitions[i];
+			vector<petri::iterator> in_transitions(g.super::next(place_it));
+			vector<petri::iterator> out_transitions(g.super::prev(place_it));
+			size_t in_count = in_transitions.size();
+			size_t out_count = out_transitions.size();
 
-			// Identify split groups
-			petri::iterator it(petri::transition::type, (int)i);
-			const vector<petri::split_group> &new_split_groups = g.split_groups_of(
-					petri::composition::choice, it);
+			// Is graph ready, in flat form?
+			if (in_count != out_count) {
+				string msg = "ERROR: split-place with unequal ins & outs detected [" \
+					+ std::to_string(place_idx) + "] => (" + std::to_string(in_count) + ", " + std::to_string(out_count) \
+					+ "). chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
+				cerr << msg << endl;
+				//throw std::runtime_error(msg);
+			}
 
-			if (!new_split_groups.empty()) {
-				for (const petri::split_group &split_group : new_split_groups) {
-
-					if (!split_group.branch.empty()) {
-						splits[split_group.split].insert(split_group.branch[0]);
-
-					} else {
-						cerr << "ERROR: a split_group with no branches! " << split_group.to_string() << endl;
-					}
+			if (out_count > 1) {
+				if (dominator != -1) {
+					string msg = "ERROR: multiple split-places detected. chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
+					cerr << msg << endl;
+					throw std::runtime_error(msg);
 				}
+
+				dominator = place_it; // Found our dominator!
+				break;
 			}
 		}
-
-		//TODO: flatten split groups
+		cout << endl << "SYNTH DOM> " << dominator.to_string() << endl;
 
 		// Capture split-less/branch-less groups too
-		if (splits.empty()) {
-			set<int> all_transition_idxs;
+		if (dominator == -1) {
+			//string msg = "ERROR: Dominator not found. chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
+			//cerr << msg << endl;
+			//throw std::runtime_error(msg);
+
+			std::set<int> all_transition_idxs;
 			for (int i = 0; i < g.transitions.size(); i++) {
 				all_transition_idxs.insert(i);
 			}
 
-			//TODO: search for predicate, in case it's not the first guarded transition (e.g. non-recurring start-up, Counter).
-			// ...don't mistake any first guard for a predicate (e.g. buffer, copy). Op-specific?
-			//int default_branch =
+			//TODO: Can there be a non-always predicate in a guard-less default branch?
 			synthesizeConditionFromTransitions(g, all_transition_idxs, Expression::boolOf(true), func, chp_to_flow_nets);
 			return func;
 		}
 
-		// Crawl conditions in CHP graph (splits) to classify Func net vars
-		for (const auto &[place_idx, transition_idxs] : splits) {
-			for (const auto &split_transition_idx : transition_idxs) {
-				std::set<int> region_idxs;
+		// Crawl each branch in flattened CHP graph
+		for (const petri::iterator &branch_head : g.super::next(dominator)) {
+			std::set<int> branch_transition_idxs = { branch_head.index };
 
-				// Traverse all transitions in this condition's cycle back to the split's place_idx
-				vector<int> prev_place_idxs = g.prev(petri::transition::type, split_transition_idx);
-				size_t transition_idx = split_transition_idx;
-				do { 
-					region_idxs.insert(transition_idx);
+			// Breadth-first crawl every path of this branch to dominator
+			std::set<petri::iterator> visited;
+			std::queue<petri::iterator> q;
+			petri::iterator curr;
+			q.push(branch_head);
 
-					++transition_idx;
-					prev_place_idxs = g.prev(petri::transition::type, transition_idx);
-					if (transition_idx == g.transitions.size()) { break; }
-				} while (std::find(prev_place_idxs.begin(), prev_place_idxs.end(), place_idx) == prev_place_idxs.end());
+			while (not q.empty()) {
+				curr = q.front();
+				q.pop();
+				visited.insert(curr);
+				//cout << endl << "[" << curr.to_string() << "] -> ";
 
-				// Identify condition's predicate, if there is one
-				arithmetic::Expression guard = g.transitions[split_transition_idx].guard;
-				//if (!guard.top.isUndef()) { //TODO: ??? why is there a constant
-				if (!guard.isValid()) {
-					synthesizeConditionFromTransitions(g, region_idxs, guard, func, chp_to_flow_nets);
+				//TODO: g.super::out() sufficient? just cache all branch_heads in set to compare
+				for (const petri::iterator &out_place : g.super::next(curr)) {
+					if (out_place == dominator) { continue; }  // Back to where we started
 
-				} else {
-					// int condition_idx = 
-					synthesizeConditionFromTransitions(g, region_idxs, Expression::boolOf(true), func, chp_to_flow_nets);
+					for (const petri::iterator &out_transition : g.super::next(out_place)) {
+						if (visited.contains(out_transition)) { continue; }  // Already been here
+
+						branch_transition_idxs.insert(out_transition.index);
+						q.push(out_transition);
+					}
 				}
 			}
+			
+			cout << "_=-+_=-+_=-+_=-> BRANCH: ";
+			std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
+			cout << endl;
+
+			// Identify condition's predicate/condition, if there is one
+			arithmetic::Expression guard = g.transitions[branch_head.index].guard;
+			//if (!guard.top.isUndef()) { //TODO: ??? why is there a constant
+			guard = guard.isValid() ? Expression::boolOf(true) : guard;
+
+			//std::list<int> branch_transition_idxs;
+			////auto iterator_to_transition = [&g](const petri::iterator &it) { return g.transitions[it.index]; };
+			//std::transform(branch_transitions.begin(), branch_transitions.end(), branch_transition_idxs.begin(),
+			//		[](const petri::iterator &it) { return it.index; });
+
+			synthesizeConditionFromTransitions(g, branch_transition_idxs, guard, func, chp_to_flow_nets);
 		}
 
 		return func;
