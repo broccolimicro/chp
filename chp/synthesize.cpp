@@ -20,140 +20,147 @@ const int BUS_WIDTH = 8;  //TODO: synthesize appropriate widths in SynthesisCont
 
 namespace chp {
 
-	//void synthesizeOperand(const arithmetic::Operand &chp_var, mapping &chp_to_flow_nets) {
-	arithmetic::Operand synthesizeOperandFromCHPVar(const string &chp_var_name, const int &chp_var_idx, const flow::Net::Purpose &purpose, flow::Func &func, mapping &chp_to_flow_nets) {
+struct SynthesisContext {
+	const chp::graph& g;
+	flow::Func &func;
+	mapping &channels;  // Mapping from CHP variable indices to flow variable indices
+	//bool debug;
+};
 
-		// Get or set Flow var for this CHP var
-		Operand flow_operand;
-		if (chp_to_flow_nets.has(chp_var_idx)) {
-			int flow_var_idx = chp_to_flow_nets.map(chp_var_idx);
-			flow_operand = Operand::varOf(flow_var_idx);	//TODO: preserve other Operand props?
-			//cout << "! HIT(" << chp_var_name << " @ CHP[" << chp_var_idx
-			//	<< "]) => Flow[" << flow_var_idx << "]" << endl;
+std::ostream& operator<<(std::ostream &os, const SynthesisContext &c) {
+	os << "SynthesisContext::channels => " << c.channels;
+	return os;
+}
 
-		} else {
-			//TODO: synthesize appropriate widths
-			flow_operand = func.pushNet(chp_var_name, flow::Type(flow::Type::FIXED, BUS_WIDTH), purpose);
-			chp_to_flow_nets.set(chp_var_idx, static_cast<int>(flow_operand.index));
-			//cout << "? MISS(" << chp_var_name << " @ CHP[" << chp_var_idx
-			//	<< "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
-		}
 
-		return flow_operand;
+arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, const int &chp_var_idx, const flow::Net::Purpose &purpose, SynthesisContext &context) {
+
+	// Get or set flow operand for this channel
+	Operand flow_operand;
+	if (context.channels.has(chp_var_idx)) {
+		int flow_var_idx = context.channels.map(chp_var_idx);
+		flow_operand = Operand::varOf(flow_var_idx);  //TODO: preserve other Operand props?
+		//cout << "! HIT(" << chp_var_name << " @ CHP[" << chp_var_idx
+		//	<< "]) => Flow[" << flow_var_idx << "]" << endl;
+
+	} else {
+		flow_operand = context.func.pushNet(chp_var_name, flow::Type(flow::Type::FIXED, BUS_WIDTH), purpose);
+		context.channels.set(chp_var_idx, static_cast<int>(flow_operand.index));
+		//cout << "? MISS(" << chp_var_name << " @ CHP[" << chp_var_idx
+		//	<< "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
+		//cout << context;
 	}
 
+	return flow_operand;
+}
 
-	// Crawl every expression inside chp::transition for nets to be mapped
-	//TODO: clarify whether Expression is expected to be pre-mapped (to CHP vars) or post-mapped (to Flow Operands)
-	void synthesizeOperandsFromExpression(const arithmetic::Expression &e, int condition_idx, flow::Func &func, mapping &chp_to_flow_nets, const chp::graph &g) {
-		//if (e.top.isUndef()) {
-		//	cout << "=======[UNDEFINED]=> " << e.to_string() << endl << endl;
-		//	return;
-		//} else if (e.sub.size() == 0) {
-		//	cout << "========[.sub.size()==0]=> " << e.to_string() << endl << endl;
-		//	return;
-		//}
 
-		for (const arithmetic::Operand &operand : e.exprIndex()) {
-			const arithmetic::Operation &operation = *e.getExpr(operand.index);
+// Crawl sub-expression for vars that represent Channel names, then categorize them for context.func
+void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx, SynthesisContext &context) {
+	//auto operand_is_var = [](const arithmetic::Operand& op) -> bool { return op.isVar(); };
+	//auto operand_to_net = [&g](const arithmetic::Operand& op) -> std::string { return context.g.netAt(op.index); };
 
-			//auto operand_is_var = [](const arithmetic::Operand& op) -> bool { return op.isVar(); };
-			//auto operand_to_net = [&g](const arithmetic::Operand& op) -> std::string { return g.netAt(op.index); };
+	for (const arithmetic::Operand &operand : e.exprIndex()) {
+		const arithmetic::Operation &operation = *e.getExpr(operand.index);
+		if (operation.func != arithmetic::Operation::OpType::TYPE_CALL) { continue; }  //TODO: other operations of interest?
 
-			if (operation.func == arithmetic::Operation::OpType::TYPE_CALL) {
-				std::string func_name = operation.operands[0].cnst.sval;
+		std::string func_name = operation.operands[0].cnst.sval;
 
-				//TODO: optimize perf (don't do string comparison)
-				if (func_name == "recv") {
-					size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
-					string channel_name = g.vars[channel_idx].name;
-					Operand flow_operand = synthesizeOperandFromCHPVar(channel_name, channel_idx, flow::Net::IN, func, chp_to_flow_nets);
+		//TODO: optimize perf (don't do string comparison)
+		if (func_name == "recv") {
+			size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
+			string channel_name = context.g.vars[channel_idx].name;
+			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
 
-					func.conds[condition_idx].ack(flow_operand);
-					//cout << "* cond #" << condition_idx << " ack'd " << channel_name << endl;
+			context.func.conds[condition_idx].ack(flow_operand);
+			//cout << "* cond #" << condition_idx << " ack'd " << channel_name << endl;
 
-				} else if (func_name == "send") {
-					size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
-					string channel_name = g.vars[channel_idx].name;
-					Operand flow_operand = synthesizeOperandFromCHPVar(channel_name, channel_idx, flow::Net::OUT, func, chp_to_flow_nets);
-					//cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl;
+		} else if (func_name == "send") {
+			size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
+			string channel_name = context.g.vars[channel_idx].name;
+			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
+			//cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl;
 
-					////TODO: don't forget to send raw constants (e.g. Operand::intOf(1)), not just vars
-					////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
+			////TODO: don't forget to send raw constants (e.g. Operand::intOf(1)), not just vars
+			////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
+			arithmetic::Expression send_expr = arithmetic::subExpr(e, operation.operands[2]);
+			synthesizeChannelsInExpression(send_expr, condition_idx, context);
 
-					//TODO: safe to mutate reference instead of copy?
-					arithmetic::Expression send_expr = arithmetic::subExpr(e, operation.operands[2]);
-					synthesizeOperandsFromExpression(send_expr, condition_idx, func, chp_to_flow_nets, g);
-					send_expr.apply(chp_to_flow_nets);
+			send_expr.apply(context.channels);
+			context.func.conds[condition_idx].req(flow_operand, send_expr);
+			//cout << "* cond #" << condition_idx << " req'd " << channel_name << endl
+			//	<< "w/ expr: " << send_expr << endl;
 
-					func.conds[condition_idx].req(flow_operand, send_expr);
-					//cout << "* cond #" << condition_idx << " req'd " << channel_name << endl
-					//	<< "w/ expr: " << send_expr << endl;
+		} else if (func_name == "probe") {
+			//cout << "<><> PROBE op <><> " << operation << endl;
+			size_t expr_idx = operation.operands[1].index;
 
-					//TODO: do we properly pipe #probes() down into Func para handle them later correctly in ModuleSynthesis & beyond?
-					//} else if (func_name == "probe") {
-						// used exclusively in these guards! They need valid signals too,
-						// just not ready signal or channel for recv behavior
+			const arithmetic::Operation &new_probe_operation = *e.getExpr(expr_idx);
+			arithmetic::Operand probe_var = new_probe_operation.operands[0];
+			//cout << "<><> PROBE unwrap <><>" << probe_var << endl;
+
+			const size_t &channel_idx = probe_var.index;
+			const string &channel_name = context.g.vars[channel_idx].name;
+			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
+			//probe_var.apply(context.channels);
+
+			//e.sub.elems.eraseExpr() // DO NOT modify while iterating over
+			//TODO: emplace_at new_probe_operation into SimpleOperationSet (or just the Operand into elems)
+
+		} //TODO: else {}  for built-in functions?
+	}
+}
+
+
+int synthesizeConditionFromTransitions(
+		arithmetic::Expression predicate,
+		const std::set<int> &transitions,
+		SynthesisContext &context) {
+
+	if (transitions.empty()) {
+		return -1; // No transitions to process
+	}
+
+	// Properly synthesize condition predicate before assigning it to the condition
+	int condition_idx = context.func.pushCond(Expression::undef());
+	synthesizeChannelsInExpression(predicate, condition_idx, context);
+	predicate.apply(context.channels);
+	context.func.conds[condition_idx].valid = predicate;
+
+	for (int transition_idx : transitions) {
+		if (transition_idx < 0 || transition_idx >= (int)context.g.transitions.size()) {
+			continue;  // skip invalid transitions
+		}
+
+		//cout << endl << "T" << transition_idx << endl;
+		const chp::transition &transition = context.g.transitions[transition_idx];
+		flow::Condition &cond = context.func.conds[condition_idx];
+
+		// Crawl into every action
+		const arithmetic::Choice &action = transition.action;
+		for (const arithmetic::Parallel &term : action.terms) {
+			for (const arithmetic::Action &action : term.actions) {
+				arithmetic::Expression expr(action.expr);
+				synthesizeChannelsInExpression(expr, condition_idx, context);
+
+				// Are we assigning to a local variable?
+				if (action.variable != -1) {
+					std::string chp_var_name = context.g.netAt(action.variable);
+					int chp_var_idx = action.variable;
+					Operand flow_operand = synthesizeChannelFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, context);
+
+					//TODO: Ignore local-only temporary variables
+					expr.apply(context.channels);
+					cond.mem(flow_operand, expr);
+					//cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
+					//	<< "in expr: " << mem_expr.to_string() << endl;
 				}
 			}
 		}
 	}
 
-
-	int synthesizeConditionFromTransitions(
-			const graph &g,
-			const std::set<int> &transitions,
-			arithmetic::Expression predicate,
-			flow::Func &func,
-			mapping &chp_to_flow_nets) {
-
-		if (transitions.empty()) {
-			return -1; // No transitions to process
-		}
-
-		// Properly synthesize condition predicate before assigning it to the condition
-		int condition_idx = func.pushCond(Expression::undef());
-		synthesizeOperandsFromExpression(predicate, condition_idx, func, chp_to_flow_nets, g);
-		predicate.apply(chp_to_flow_nets);
-		func.conds[condition_idx].valid = predicate;
-
-		for (int transition_idx : transitions) {
-			if (transition_idx < 0 || transition_idx >= (int)g.transitions.size()) {
-				continue;  // skip invalid transitions
-			}
-
-			//cout << endl << "T" << transition_idx << endl;
-			const chp::transition &transition = g.transitions[transition_idx];
-			flow::Condition &cond = func.conds[condition_idx];
-
-			// Crawl into every action
-			const arithmetic::Choice &action = transition.action;
-			for (const arithmetic::Parallel &term : action.terms) {
-				for (const arithmetic::Action &action : term.actions) {
-
-					//TODO: safe to mutate reference instead of copy?
-					arithmetic::Expression expr(action.expr);
-					synthesizeOperandsFromExpression(expr, condition_idx, func, chp_to_flow_nets, g);
-					//expr.apply(chp_to_flow_nets);
-
-					// Are we assigning to a local variable?
-					if (action.variable != -1) {
-						std::string chp_var_name = g.netAt(action.variable);
-						int chp_var_idx = action.variable;
-						Operand flow_operand = synthesizeOperandFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, func, chp_to_flow_nets);
-
-						expr.apply(chp_to_flow_nets);
-						cond.mem(flow_operand, expr);
-						//cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
-						//	<< "in expr: " << mem_expr.to_string() << endl;
-					}
-				}
-			}
-		}
-
-		return condition_idx;
-	}
-
+	return condition_idx;
+}
 
 
 std::set<int> get_branch_transitions(const graph &g, const petri::iterator &dominator, const petri::iterator &branch_head) {
