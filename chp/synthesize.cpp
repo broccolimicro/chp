@@ -4,7 +4,6 @@
 #include <ranges>
 #include <string>
 #include <vector>
-#include <unordered_set>
 
 #include <arithmetic/algorithm.h>
 #include <chp/graph.h>
@@ -15,10 +14,9 @@
 using namespace std;
 
 using arithmetic::Expression;
-//using arithmetic::Operand;
+using arithmetic::Operand;
 
-const int BUS_WIDTH = 8;
-//TODO: globalize chp_to_flow_nets to synthesize.cpp?
+const int BUS_WIDTH = 8;  //TODO: synthesize appropriate widths in SynthesisContext
 
 namespace chp {
 
@@ -157,108 +155,115 @@ namespace chp {
 	}
 
 
-	flow::Func synthesizeFuncFromCHP(const graph &g) {
-		flow::Func func;
-		func.name = g.name;
 
-		// Mapping from CHP variable indices to flow variable indices
-		mapping chp_to_flow_nets;
+std::set<int> get_branch_transitions(const graph &g, const petri::iterator &dominator, const petri::iterator &branch_head) {
+	std::set<int> branch_transition_idxs = { branch_head.index };
 
-		// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
-		petri::iterator dominator;
+	// Breadth-first crawl every path of this branch to dominator
+	std::set<petri::iterator> visited;
+	std::queue<petri::iterator> q;
+	petri::iterator curr;
+	q.push(branch_head);
 
-		for (int place_idx = 0; place_idx < g.places.size(); place_idx++) {
-			petri::iterator place_it(place::type, place_idx);
+	while (not q.empty()) {
+		curr = q.front();
+		q.pop();
+		visited.insert(curr);
+		//cout << endl << "[" << curr.to_string() << "] -> ";
 
-			vector<petri::iterator> in_transitions(g.super::next(place_it));
-			vector<petri::iterator> out_transitions(g.super::prev(place_it));
-			size_t in_count = in_transitions.size();
-			size_t out_count = out_transitions.size();
+		//TODO: context.g.super::out() sufficient? just cache all branch_heads in set to compare
+		for (const petri::iterator &out_place : g.super::next(curr)) {
+			if (out_place == dominator) { continue; }  // Back to where we started
 
-			// Is graph ready, in flat form?
-			if (in_count != out_count) {
-				string msg = "ERROR: split-place with unequal ins & outs detected [" \
-					+ std::to_string(place_idx) + "] => (" + std::to_string(in_count) + ", " + std::to_string(out_count) \
-					+ "). chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
-				cerr << msg << endl;
-				//throw std::runtime_error(msg);
-			}
+			for (const petri::iterator &out_transition : g.super::next(out_place)) {
+				if (visited.contains(out_transition)) { continue; }  // Already been here
 
-			if (out_count > 1) {
-				if (dominator != -1) {
-					string msg = "ERROR: multiple split-places detected. chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
-					cerr << msg << endl;
-					throw std::runtime_error(msg);
-				}
-
-				dominator = place_it; // Found our dominator!
-				break;
+				branch_transition_idxs.insert(out_transition.index);
+				q.push(out_transition);
 			}
 		}
-		cout << endl << "SYNTH DOM> " << dominator.to_string() << endl;
-
-		// Capture split-less/branch-less groups too
-		if (dominator == -1) {
-			//string msg = "ERROR: Dominator not found. chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
-			//cerr << msg << endl;
-			//throw std::runtime_error(msg);
-
-			std::set<int> all_transition_idxs;
-			for (int i = 0; i < g.transitions.size(); i++) {
-				all_transition_idxs.insert(i);
-			}
-
-			//TODO: Can there be a non-always predicate in a guard-less default branch?
-			synthesizeConditionFromTransitions(g, all_transition_idxs, Expression::boolOf(true), func, chp_to_flow_nets);
-			return func;
-		}
-
-		// Crawl each branch in flattened CHP graph
-		for (const petri::iterator &branch_head : g.super::next(dominator)) {
-			std::set<int> branch_transition_idxs = { branch_head.index };
-
-			// Breadth-first crawl every path of this branch to dominator
-			std::set<petri::iterator> visited;
-			std::queue<petri::iterator> q;
-			petri::iterator curr;
-			q.push(branch_head);
-
-			while (not q.empty()) {
-				curr = q.front();
-				q.pop();
-				visited.insert(curr);
-				//cout << endl << "[" << curr.to_string() << "] -> ";
-
-				//TODO: g.super::out() sufficient? just cache all branch_heads in set to compare
-				for (const petri::iterator &out_place : g.super::next(curr)) {
-					if (out_place == dominator) { continue; }  // Back to where we started
-
-					for (const petri::iterator &out_transition : g.super::next(out_place)) {
-						if (visited.contains(out_transition)) { continue; }  // Already been here
-
-						branch_transition_idxs.insert(out_transition.index);
-						q.push(out_transition);
-					}
-				}
-			}
-			
-			cout << "_=-+_=-+_=-+_=-> BRANCH: ";
-			std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
-			cout << endl;
-
-			// Identify condition's predicate/condition, if there is one
-			arithmetic::Expression guard = g.transitions[branch_head.index].guard;
-			//if (!guard.top.isUndef()) { //TODO: ??? why is there a constant
-			guard = guard.isValid() ? Expression::boolOf(true) : guard;
-
-			//std::list<int> branch_transition_idxs;
-			////auto iterator_to_transition = [&g](const petri::iterator &it) { return g.transitions[it.index]; };
-			//std::transform(branch_transitions.begin(), branch_transitions.end(), branch_transition_idxs.begin(),
-			//		[](const petri::iterator &it) { return it.index; });
-
-			synthesizeConditionFromTransitions(g, branch_transition_idxs, guard, func, chp_to_flow_nets);
-		}
-
-		return func;
 	}
+
+	cout << endl << "_=-+_=-+_=-+_=-> BRANCH: ";
+	std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
+	cout << endl;
+
+	return branch_transition_idxs;
+}
+
+
+flow::Func synthesizeFuncFromCHP(const graph &g) {
+	flow::Func func;
+	mapping channels;
+	SynthesisContext context(g, func, channels);
+	context.func.name = g.name;
+
+	// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
+	petri::iterator dominator;
+
+	for (int place_idx = 0; place_idx < g.places.size(); place_idx++) {
+		petri::iterator place_it(place::type, place_idx);
+
+		vector<petri::iterator> in_transitions(g.super::next(place_it));
+		vector<petri::iterator> out_transitions(g.super::prev(place_it));
+		size_t in_count = in_transitions.size();
+		size_t out_count = out_transitions.size();
+
+		// Is graph ready, in flat form?
+		if (in_count != out_count) {
+			string msg = "ERROR: split-place with unequal ins & outs detected [" \
+				+ std::to_string(place_idx) + "] => (" + std::to_string(in_count) + ", " + std::to_string(out_count) \
+				+ "). chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
+			cerr << msg << endl;
+			//throw std::runtime_error(msg);
+		}
+
+		if (out_count > 1) {
+			if (dominator != -1) {
+				string msg = "ERROR: multiple split-places detected. chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
+				cerr << msg << endl;
+				throw std::runtime_error(msg);
+			}
+
+			dominator = place_it; // Found our dominator!
+			break;
+		}
+	}
+	cout << endl << "SYNTH DOM> " << dominator.to_string() << endl;
+
+	// Capture split-less/branch-less groups too
+	if (dominator == -1) {
+		//string msg = "ERROR: Dominator not found. chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
+		//cerr << msg << endl;
+		//throw std::runtime_error(msg);
+
+		std::set<int> all_transition_idxs;
+		for (int i = 0; i < g.transitions.size(); i++) {
+			all_transition_idxs.insert(i);
+		}
+
+		//TODO: Can there be a non-always predicate in a guard-less default branch?
+		synthesizeConditionFromTransitions(Expression::boolOf(true), all_transition_idxs, context);
+		return context.func;
+	}
+
+	// Crawl each branch in flattened chp::graph
+	for (const petri::iterator &branch_head : g.super::next(dominator)) {
+		std::set<int> branch_transition_idxs = get_branch_transitions(g, dominator, branch_head);
+
+		// Identify condition's predicate/condition, if there is one
+		arithmetic::Expression guard = g.transitions[branch_head.index].guard;
+		//if (!guard.top.isUndef()) { //TODO: ??? why is there a constant
+		guard = guard.isValid() ? Expression::boolOf(true) : guard;
+
+		synthesizeConditionFromTransitions(guard, branch_transition_idxs, context);
+
+		//std::list<int> branch_transition_idxs;
+		////auto iterator_to_transition = [&g](const petri::iterator &it) { return g.transitions[it.index]; };
+		//std::transform(branch_transitions.begin(), branch_transitions.end(), branch_transition_idxs.begin(),
+		//		[](const petri::iterator &it) { return it.index; });
+	}
+
+	return context.func;
+}
 }
