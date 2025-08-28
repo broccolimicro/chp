@@ -756,7 +756,7 @@ void graph::flatten(bool debug) {
 
 							if (debug) { cout << "(empty parent_body)> "; }
 							vector<petri::iterator> child_sequence = transition_sequences[child_transition];
-							std::copy(child_sequence.begin(), child_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " "));
+							if (debug) { std::copy(child_sequence.begin(), child_sequence.end(), std::ostream_iterator<petri::iterator>(cout, " ")); }
 							if (debug) { cout << endl; }
 
 							//TODO: splice out in+out arcs to parent_sequence_head
