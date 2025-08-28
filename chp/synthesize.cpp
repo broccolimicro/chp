@@ -4,6 +4,7 @@
 #include <ranges>
 #include <string>
 #include <vector>
+#include <queue>
 
 #include <arithmetic/algorithm.h>
 #include <chp/graph.h>
@@ -246,7 +247,9 @@ flow::Func synthesizeFuncFromCHP(const graph &g) {
 
 		std::set<int> all_transition_idxs;
 		for (int i = 0; i < g.transitions.size(); i++) {
-			all_transition_idxs.insert(i);
+			if (g.transitions.is_valid(i)) {
+				all_transition_idxs.insert(i);
+			}
 		}
 
 		//TODO: Can there be a non-always predicate in a guard-less default branch?

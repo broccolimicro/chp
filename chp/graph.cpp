@@ -6,6 +6,7 @@
 #include <common/mapping.h>
 #include <chp/simulator.h>
 #include <interpret_arithmetic/export.h>
+#include <queue>
 
 namespace chp
 {
