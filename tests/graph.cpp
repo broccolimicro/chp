@@ -70,7 +70,7 @@ bool testBranchFlatten(const string &source, const string &target, bool render=t
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 	}
 
-	sourceGraph.flatten();
+	sourceGraph.flatten(true);
 	
 	if (post_process) { sourceGraph.post_process(true, false); }
 	//EXPECT_EQ(sourceGraph, targetGraph);
@@ -82,6 +82,26 @@ bool testBranchFlatten(const string &source, const string &target, bool render=t
 	}
 
 	return false;
+}
+
+
+TEST(BranchFlatten, Merge) {
+	std::string source = R"(
+*[c=C?;
+	[ c==0 -> x=A?
+	[] c==1 -> x=B?
+	]; R!x
+]
+		)";
+
+	//TODO: rewind initial marking to match "c=C?" start-up sequence
+	std::string target = R"(
+*[[ c==0 -> x=A?; R!x; c=C?
+	[] c==1 -> x=B?; R!x; c=C?
+]]
+		)";
+
+	EXPECT_TRUE(testBranchFlatten(source, target));
 }
 
 
@@ -340,13 +360,13 @@ TEST(BranchFlatten, Counter) {
 
 TEST(BranchFlatten, DSAdder) {
 	std::string source = R"(
-*[ s = (Ad + Bd + ci) % pow(2, N);
-	co = (Ad + Bd + ci) / pow(2, N);
-	[ !Ac | !Bc -> Sc!0,Sd!s; ci=co;
-		[ !Ac -> A? [] else -> skip ],
-		[ !Bc -> B? [] else -> skip ]
-	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
-	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; A?, B?
+*[ s = ((#A).d + (#B).d + ci) % pow(2, N);
+	co = ((#A).d + (#B).d + ci) / pow(2, N);
+	[ !(#A).c | !(#B).c -> Sc!0, Sd!s; ci=co;
+		[ !(#A).c -> A? [] else -> skip ],
+		[ !(#B).c -> B? [] else -> skip ]
+	[] (#A).c & (#B).c & co~=ci -> Sc!0, Sd!s; ci=co
+	[] (#A).c & (#B).c & co==ci -> Sc!1, Sd!s; ci=0; A?, B?
 	]
 ]
 		)";
@@ -420,6 +440,31 @@ TEST(BranchFlatten, Collatz) {
 }
 
 
+TEST(BranchFlatten, IsEven) {
+	std::string source = R"(
+i = 0;
+*[ i < 10 ->
+    [ (i % 2 == 0) -> log!i
+    [] true -> skip
+    ];
+    i = i + 1
+]
+		)";
+
+	std::string target = R"(
+i = 0;
+*[ i < 10 ->
+    [ (i % 2 == 0) -> log!i
+    [] true -> skip
+    ];
+    i = i + 1
+]
+		)";
+
+	EXPECT_TRUE(testBranchFlatten(source, target));
+}
+
+
 TEST(BranchFlatten, IsPrime) {
 	std::string source = R"(
 n = N?;
@@ -461,7 +506,6 @@ n = N?;
 }
 
 
-/*
 TEST(BranchFlatten, Arbiter) {
 	std::string source = R"(
 *[
@@ -477,111 +521,110 @@ TEST(BranchFlatten, Arbiter) {
 		)";
 
 	std::string target = R"(
-*[
-  [ req0? & req1? & prio? -> ack1!x; gnt1!x
+*[[ req0? & req1? & prio? -> ack1!x; gnt1!x
   [] req0? & req1? & ~prio? -> ack0!x; gnt0!x
   [] req0? & ~req1? -> ack0!x; gnt0!x
   [] ~req0? & req1? -> ack1!x; gnt1!x
   [] ~req0? & ~req1? -> skip
-  ]
-]
+]]
 		)";
 
 	EXPECT_TRUE(testBranchFlatten(source, target));
 }
 
 
-TEST(BranchFlatten, Router) {
-	std::string source = R"(
-*[
-  packet_in?(header, payload);
-  [ header.dest == 0 ->
-    [ port0_ready? -> port0_out!(payload)
-    [] ~port0_ready? -> drop!(payload)
-    ]
-  [] header.dest == 1 ->
-    [ port1_ready? -> port1_out!(payload)
-    [] ~port1_ready? -> drop!(payload)
-    ]
-  [] otherwise -> error_handler!()
-  ]
-]
-		)";
+//TEST(BranchFlatten, Router) {
+//	std::string source = R"(
+//*[
+//  packet_in?(header, payload);
+//  [ header.dest == 0 ->
+//    [ port0_ready? -> port0_out!(payload)
+//    [] ~port0_ready? -> drop!(payload)
+//    ]
+//  [] header.dest == 1 ->
+//    [ port1_ready? -> port1_out!(payload)
+//    [] ~port1_ready? -> drop!(payload)
+//    ]
+//  [] otherwise -> error_handler!()
+//  ]
+//]
+//		)";
+//
+//	std::string target = R"(
+//*[
+//  packet_in?(header, payload);
+//  [ header.dest == 0 & port0_ready? -> port0_out!(payload)
+//  [] header.dest == 0 & ~port0_ready? -> drop!(payload)
+//  [] header.dest == 1 & port1_ready? -> port1_out!(payload)
+//  [] header.dest == 1 & ~port1_ready? -> drop!(payload)
+//  [] otherwise -> error_handler!()
+//  ]
+//]
+//		)";
+//
+//	EXPECT_TRUE(testBranchFlatten(source, target));
+//}
+//
+//
+//TEST(BranchFlatten, Stall) {
+//	std::string source = R"(
+//*[
+//  [ data_hazard? ->
+//    stall!x
+//  [] ~data_hazard? ->
+//    [ resource_conflict? ->
+//      stall!x
+//    [] ~resource_conflict? ->
+//      proceed!x
+//    ]
+//  ]
+//]
+//		)";
+//
+//	std::string target = R"(
+//*[
+//  [ data_hazard? or resource_conflict? ->
+//    stall!x
+//  [] ~data_hazard? and ~resource_conflict? ->
+//    proceed!x
+//  ]
+//]
+//		)";
+//
+//	EXPECT_TRUE(testBranchFlatten(source, target));
+//}
+//
+//
+//TEST(BranchFlatten, MemoryAccess) {
+//	std::string source = R"(
+//*[
+//  [ read_req?(addr) ->
+//    [ is_valid(addr) ->
+//      mem_read!addr; data_out!data
+//    [] ~is_valid(addr) ->
+//      error_flag!x
+//    ]
+//  [] write_req?(addr, data) ->
+//    [ is_valid(addr) ->
+//      mem_write!(addr, data)
+//    [] ~is_valid(addr) ->
+//      error_flag!x
+//    ]
+//  ]
+//]
+//		)";
+//
+//	std::string target = R"(
+//*[
+//  [ read_req?(addr) & is_valid(addr) -> mem_read!(addr); data_out!(data)
+//  [] read_req?(addr) & ~is_valid(addr) -> error_flag!
+//  [] write_req?(addr, data) & is_valid(addr) -> mem_write!(addr, data)
+//  [] write_req?(addr, data) & ~is_valid(addr) -> error_flag!
+//  ]
+//]
+//		)";
+//
+//	EXPECT_TRUE(testBranchFlatten(source, target));
+//}
 
-	std::string target = R"(
-*[
-  packet_in?(header, payload);
-  [ header.dest == 0 & port0_ready? -> port0_out!(payload)
-  [] header.dest == 0 & ~port0_ready? -> drop!(payload)
-  [] header.dest == 1 & port1_ready? -> port1_out!(payload)
-  [] header.dest == 1 & ~port1_ready? -> drop!(payload)
-  [] otherwise -> error_handler!()
-  ]
-]
-		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
-}
-
-
-TEST(BranchFlatten, Stall) {
-	std::string source = R"(
-*[
-  [ data_hazard? ->
-    stall!x
-  [] ~data_hazard? ->
-    [ resource_conflict? ->
-      stall!x
-    [] ~resource_conflict? ->
-      proceed!x
-    ]
-  ]
-]
-		)";
-
-	std::string target = R"(
-*[
-  [ data_hazard? or resource_conflict? ->
-    stall!x
-  [] ~data_hazard? and ~resource_conflict? ->
-    proceed!x
-  ]
-]
-		)";
-
-	EXPECT_TRUE(testBranchFlatten(source, target));
-}
-
-
-TEST(BranchFlatten, MemoryAccess) {
-	std::string source = R"(
-*[
-  [ read_req?addr ->
-    [ is_valid(addr) ->
-      mem_read!addr; data_out!data
-    [] ~is_valid(addr) ->
-      error_flag!x
-    ]
-  [] write_req?(addr, data) ->
-    [ is_valid(addr) ->
-      mem_write!(addr, data)
-    [] ~is_valid(addr) ->
-      error_flag!x
-    ]
-  ]
-]
-		)";
-
-	std::string target = R"(
-*[
-  [ read_req?(addr) & is_valid(addr) -> mem_read!(addr); data_out!(data)
-  [] read_req?(addr) & ~is_valid(addr) -> error_flag!
-  [] write_req?(addr, data) & is_valid(addr) -> mem_write!(addr, data)
-  [] write_req?(addr, data) & ~is_valid(addr) -> error_flag!
-  ]
-]
-		)";
-
-	EXPECT_TRUE(testBranchFlatten(source, target));
-}
-*/
