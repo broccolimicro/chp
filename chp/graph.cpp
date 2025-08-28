@@ -301,6 +301,8 @@ petri::mapping graph::merge(graph g) {
 	}
 
 	for (int i = 0; i < (int)g.transitions.size(); i++) {
+		if (not g.transitions.is_valid(i)) continue;
+
 		g.transitions[i].action.apply(netMap);
 		g.transitions[i].guard.apply(netMap);
 	}
@@ -371,6 +373,8 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 		// Remove skips
 		change = false;
 		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and not change; i++) {
+			if (not is_valid(i)) continue;
+
 			if (transitions[i.index].is_vacuous()) {
 				vector<petri::iterator> n = next(i); // places
 				if (n.size() > 1) {
@@ -412,6 +416,8 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 		// allows us to merge that guard at the end of the conditional branch into
 		// the transition.
 		/*for (petri::iterator i(place::type, 0); i < (int)places.size() and !change; i++) {
+			if (not is_valid(i)) continue;
+
 			vector<petri::iterator> p = prev(i);
 			vector<petri::iterator> active, passive;
 			for (int k = 0; k < (int)p.size(); k++) {
@@ -467,6 +473,8 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 			continue;
 
 		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and !change; i++) {
+			if (not is_valid(i)) continue;
+
 			if (transitions[i.index].action.is_passive()) {
 				vector<petri::iterator> nn = next(next(i)); // transitions
 				for (int l = 0; l < (int)nn.size(); l++) {
