@@ -594,6 +594,7 @@ void graph::flatten(bool debug) {
 
 	// TODO: extract this directly from graph, which was already traversed
 	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+		if (not this->transitions.is_valid(transition_idx)) continue;
 		//const petri::transition &transition = this->transitions[transition_idx];
 
 		// Identify split groups
