@@ -192,9 +192,9 @@ std::set<int> get_branch_transitions(const graph &g, const petri::iterator &domi
 		}
 	}
 
-	cout << endl << "_=-+_=-+_=-+_=-> BRANCH: ";
-	std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
-	cout << endl;
+	//cout << endl << "_=-+_=-+_=-+_=-> BRANCH: ";
+	//std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
+	//cout << endl;
 
 	return branch_transition_idxs;
 }
@@ -237,7 +237,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g) {
 			break;
 		}
 	}
-	cout << endl << "SYNTH DOM> " << dominator.to_string() << endl;
+	//cout << endl << "SYNTH DOM> " << dominator.to_string() << endl;
 
 	// Capture split-less/branch-less groups too
 	if (dominator == -1) {
