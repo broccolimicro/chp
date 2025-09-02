@@ -102,7 +102,7 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx
 
 			const size_t &channel_idx = probe_var.index;
 			const string &channel_name = context.g.vars[channel_idx].name;
-			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
+			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
 			//probe_var.apply(context.channels);
 
 			//e.sub.elems.eraseExpr() // DO NOT modify while iterating over
@@ -210,6 +210,8 @@ flow::Func synthesizeFuncFromCHP(const graph &g) {
 	petri::iterator dominator;
 
 	for (int place_idx = 0; place_idx < g.places.size(); place_idx++) {
+		if (not g.places.is_valid(place_idx)) continue;
+
 		petri::iterator place_it(place::type, place_idx);
 
 		vector<petri::iterator> in_transitions(g.super::next(place_it));
