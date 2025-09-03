@@ -87,6 +87,7 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx
 			arithmetic::Expression send_expr = arithmetic::subExpr(e, operation.operands[2]);
 			synthesizeChannelsInExpression(send_expr, condition_idx, context);
 
+			send_expr.minimize();
 			send_expr.apply(context.channels);
 			context.func.conds[condition_idx].req(flow_operand, send_expr);
 			//cout << "* cond #" << condition_idx << " req'd " << channel_name << endl
@@ -125,6 +126,8 @@ int synthesizeConditionFromTransitions(
 	// Properly synthesize condition predicate before assigning it to the condition
 	int condition_idx = context.func.pushCond(Expression::undef());
 	synthesizeChannelsInExpression(predicate, condition_idx, context);
+
+	predicate.minimize();
 	predicate.apply(context.channels);
 	context.func.conds[condition_idx].valid = predicate;
 
@@ -151,6 +154,7 @@ int synthesizeConditionFromTransitions(
 					Operand flow_operand = synthesizeChannelFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, context);
 
 					//TODO: Ignore local-only temporary variables
+					expr.minimize();
 					expr.apply(context.channels);
 					cond.mem(flow_operand, expr);
 					//cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
