@@ -17,7 +17,7 @@ using namespace std;
 using arithmetic::Expression;
 using arithmetic::Operand;
 
-const int BUS_WIDTH = 8;  //TODO: synthesize appropriate widths in SynthesisContext
+const size_t DATA_CHANNEL_WIDTH = 8;  //TODO: synthesize appropriate widths in SynthesisContext
 
 namespace chp {
 
@@ -25,7 +25,7 @@ struct SynthesisContext {
 	const chp::graph& g;
 	flow::Func &func;
 	mapping &channels;  // Mapping from CHP variable indices to flow variable indices
-	//bool debug;
+	bool debug;
 };
 
 std::ostream& operator<<(std::ostream &os, const SynthesisContext &c) {
@@ -45,7 +45,9 @@ arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, cons
 		//	<< "]) => Flow[" << flow_var_idx << "]" << endl;
 
 	} else {
-		flow_operand = context.func.pushNet(chp_var_name, flow::Type(flow::Type::FIXED, BUS_WIDTH), purpose);
+		//TODO: pipe appropriate width annotations via SynthesisContext
+		size_t channel_width = (!chp_var_name.empty() && chp_var_name.back() == 'c') ? 1 : DATA_CHANNEL_WIDTH;  // Hack for short-term testing
+		flow_operand = context.func.pushNet(chp_var_name, flow::Type(flow::Type::FIXED, channel_width), purpose);
 		context.channels.set(chp_var_idx, static_cast<int>(flow_operand.index));
 		//cout << "? MISS(" << chp_var_name << " @ CHP[" << chp_var_idx
 		//	<< "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
@@ -204,10 +206,10 @@ std::set<int> get_branch_transitions(const graph &g, const petri::iterator &domi
 }
 
 
-flow::Func synthesizeFuncFromCHP(const graph &g) {
+flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	flow::Func func;
 	mapping channels;
-	SynthesisContext context(g, func, channels);
+	SynthesisContext context(g, func, channels, debug);
 	context.func.name = g.name;
 
 	// Confirm chp::graph has been normalized to flattened form & identify split-place dominator

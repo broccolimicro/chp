@@ -9,6 +9,6 @@
 
 namespace chp {
 
-flow::Func synthesizeFuncFromCHP(const graph &g);
+flow::Func synthesizeFuncFromCHP(const graph &g, bool debug=false);
 
 }
