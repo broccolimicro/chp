@@ -12,7 +12,7 @@
 #include <flow/func.h>
 #include <flow/module.h>
 #include <flow/synthesize.h>
-#include <interpret_flow/export.h>
+#include <interpret_flow/export_verilog.h>
 #include <parse/default/block_comment.h>
 #include <parse/default/line_comment.h>
 #include <parse/tokenizer.h>
