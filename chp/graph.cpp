@@ -1,12 +1,14 @@
 #include "graph.h"
 
+#include <queue>
+#include <ranges>
+
 #include <arithmetic/expression.h>
+#include <chp/simulator.h>
 #include <common/message.h>
 #include <common/text.h>
 #include <common/mapping.h>
-#include <chp/simulator.h>
 #include <interpret_arithmetic/export.h>
-#include <queue>
 
 namespace chp
 {
@@ -701,6 +703,7 @@ void graph::flatten(bool debug) {
 		print_map(transition_sequences);
 	}
 
+	//TODO: replace indices w/ iterators
 	// Identify most dominant split
 	auto dominance(this->split_dominance());
 	//TODO: compute dominance can be handled in a helper (e.g. this->compute_dominance() & this->dominance_ready w/ dominance relation AND dominance frontiers)
@@ -911,6 +914,35 @@ void graph::flatten(bool debug) {
 
 	if (debug) { cout << "¡Yµ wWµøT!" << endl; }
 }
+
+
+bool graph::isFlat() const {
+	//TODO: cache result for rapid look-up in chp::graph
+
+	// Collect subset of places that have either
+	// multiple inputs or multiple outputs
+	set<petri::iterator> multi_places;  // Multiple inputs
+	for (petri::iterator place_it : this->get_places()) {
+		if (this->super::in(place_it).size() > 1
+				|| this->super::out(place_it).size() > 1) {
+			multi_places.insert(place_it);
+		}
+	}
+
+	// If every pair of multi_place is in parallel, graph is flat
+	//TODO: there are more flat graphs that don't fit this constraint
+	for (petri::iterator a : multi_places) {
+		for (petri::iterator b : multi_places) {
+			if (a != b
+					&& !this->super::is(petri::composition::parallel, a, b, true, true)) {
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
 
 arithmetic::Expression graph::exclusion(int index) const {
 	arithmetic::Expression result;

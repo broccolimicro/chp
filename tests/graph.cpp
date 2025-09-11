@@ -71,17 +71,16 @@ bool testBranchFlatten(const string &source, const string &target, bool render=t
 	}
 
 	sourceGraph.flatten(true);
-	
 	if (post_process) { sourceGraph.post_process(true, false); }
-	//EXPECT_EQ(sourceGraph, targetGraph);
-
 	if (render) {
 		string filenameWithoutExtension = (TEST_DIR / ("_mid_" + test_name)).string();
 		string graphvizRaw = chp::export_graph(sourceGraph, true).to_string();
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 	}
 
-	return false;
+	//EXPECT_EQ(sourceGraph, targetGraph); //TODO: needs comparison operator
+	//return false;
+	return sourceGraph.isFlat();
 }
 
 

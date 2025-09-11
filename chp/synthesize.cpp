@@ -212,6 +212,8 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	SynthesisContext context(g, func, channels, debug);
 	context.func.name = g.name;
 
+	if (debug) { cout << endl << "?? FLAT ENOUGH FOR SYNTHESIS? " << std::boolalpha << g.isFlat() << endl << endl; }
+
 	// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
 	petri::iterator dominator;
 

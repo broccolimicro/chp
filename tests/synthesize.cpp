@@ -104,13 +104,14 @@ void testFuncSynthesisFromCHP(flow::Func expected, bool render=true) {
 	chp::graph g = importCHPFromString(chpRaw);
 	g.post_process(true, false);
 	g.name = expected.name;
+	g.flatten(true);
 
 	if (render) {
 		string graphvizRaw = chp::export_graph(g, true).to_string();
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 	}
 
-	flow::Func real = chp::synthesizeFuncFromCHP(g);
+	flow::Func real = chp::synthesizeFuncFromCHP(g, true);
 	EXPECT_EQ(real.name, expected.name);
 	EXPECT_TRUE(areEquivalent(real, expected));
 

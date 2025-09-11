@@ -147,7 +147,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void decompose();
 	void expand();
 	void flatten(bool debug=false);
-	//bool isFlat();  //TODO: cache in property for quick look-up
+	bool isFlat() const;  //TODO: cache in property for quick look-up
 	arithmetic::Expression exclusion(int index) const;
 };
 
