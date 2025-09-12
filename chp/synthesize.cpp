@@ -41,17 +41,23 @@ arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, cons
 	if (context.channels.has(chp_var_idx)) {
 		int flow_var_idx = context.channels.map(chp_var_idx);
 		flow_operand = Operand::varOf(flow_var_idx);  //TODO: preserve other Operand props?
-		//cout << "! HIT(" << chp_var_name << " @ CHP[" << chp_var_idx
-		//	<< "]) => Flow[" << flow_var_idx << "]" << endl;
+
+		if (context.debug) {
+			cout << "! HIT(" << chp_var_name << " @ CHP[" << chp_var_idx
+				<< "]) => Flow[" << flow_var_idx << "]" << endl;
+		}
 
 	} else {
 		//TODO: pipe appropriate width annotations via SynthesisContext
 		size_t channel_width = (!chp_var_name.empty() && chp_var_name.back() == 'c') ? 1 : DATA_CHANNEL_WIDTH;  // Hack for short-term testing
 		flow_operand = context.func.pushNet(chp_var_name, flow::Type(flow::Type::FIXED, channel_width), purpose);
 		context.channels.set(chp_var_idx, static_cast<int>(flow_operand.index));
-		//cout << "? MISS(" << chp_var_name << " @ CHP[" << chp_var_idx
-		//	<< "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
-		//cout << context;
+
+		if (context.debug) {
+			cout << "? MISS(" << chp_var_name << " @ CHP[" << chp_var_idx
+				<< "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
+			cout << context;
+		}
 	}
 
 	return flow_operand;
@@ -76,13 +82,13 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx
 			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
 
 			context.func.conds[condition_idx].ack(flow_operand);
-			//cout << "* cond #" << condition_idx << " ack'd " << channel_name << endl;
+			if (context.debug) { cout << "* cond #" << condition_idx << " ack'd " << channel_name << endl; }
 
 		} else if (func_name == "send") {
 			size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
 			string channel_name = context.g.vars[channel_idx].name;
 			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
-			//cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl;
+			if (context.debug) { cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl; }
 
 			////TODO: don't forget to send raw constants (e.g. Operand::intOf(1)), not just vars
 			////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
@@ -92,16 +98,19 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx
 			send_expr.minimize();
 			send_expr.apply(context.channels);
 			context.func.conds[condition_idx].req(flow_operand, send_expr);
-			//cout << "* cond #" << condition_idx << " req'd " << channel_name << endl
-			//	<< "w/ expr: " << send_expr << endl;
+
+			if (context.debug) {
+				cout << "* cond #" << condition_idx << " req'd " << channel_name << endl
+					<< "w/ expr: " << send_expr << endl;
+			}
 
 		} else if (func_name == "probe") {
-			//cout << "<><> PROBE op <><> " << operation << endl;
+			if (context.debug) { cout << "<><> PROBE op <><> " << operation << endl; }
 			size_t expr_idx = operation.operands[1].index;
 
 			const arithmetic::Operation &new_probe_operation = *e.getExpr(expr_idx);
 			arithmetic::Operand probe_var = new_probe_operation.operands[0];
-			//cout << "<><> PROBE unwrap <><>" << probe_var << endl;
+			if (context.debug) { cout << "<><> PROBE unwrap <><>" << probe_var << endl; }
 
 			const size_t &channel_idx = probe_var.index;
 			const string &channel_name = context.g.vars[channel_idx].name;
@@ -138,7 +147,7 @@ int synthesizeConditionFromTransitions(
 			continue;  // skip invalid transitions
 		}
 
-		//cout << endl << "T" << transition_idx << endl;
+		if (context.debug) { cout << endl << "T" << transition_idx << endl; }
 		const chp::transition &transition = context.g.transitions[transition_idx];
 		flow::Condition &cond = context.func.conds[condition_idx];
 
@@ -159,8 +168,11 @@ int synthesizeConditionFromTransitions(
 					expr.minimize();
 					expr.apply(context.channels);
 					cond.mem(flow_operand, expr);
-					//cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
-					//	<< "in expr: " << mem_expr.to_string() << endl;
+
+					if (context.debug) {
+						cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
+						<< "in expr: " << expr.to_string() << endl;
+					}
 				}
 			}
 		}
@@ -170,7 +182,7 @@ int synthesizeConditionFromTransitions(
 }
 
 
-std::set<int> get_branch_transitions(const graph &g, const petri::iterator &dominator, const petri::iterator &branch_head) {
+std::set<int> get_branch_transitions(const graph &g, const petri::iterator &dominator, const petri::iterator &branch_head, const SynthesisContext &context) {
 	std::set<int> branch_transition_idxs = { branch_head.index };
 
 	// Breadth-first crawl every path of this branch to dominator
@@ -183,7 +195,7 @@ std::set<int> get_branch_transitions(const graph &g, const petri::iterator &domi
 		curr = q.front();
 		q.pop();
 		visited.insert(curr);
-		//cout << endl << "[" << curr.to_string() << "] -> ";
+		if (context.debug) { cout << endl << "[" << curr.to_string() << "] -> "; }
 
 		//TODO: context.g.super::out() sufficient? just cache all branch_heads in set to compare
 		for (const petri::iterator &out_place : g.super::next(curr)) {
@@ -198,9 +210,11 @@ std::set<int> get_branch_transitions(const graph &g, const petri::iterator &domi
 		}
 	}
 
-	//cout << endl << "_=-+_=-+_=-+_=-> BRANCH: ";
-	//std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
-	//cout << endl;
+	if (context.debug) {
+		cout << endl << "_=-+_=-+_=-+_=-> BRANCH: ";
+		std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
+		cout << endl;
+	}
 
 	return branch_transition_idxs;
 }
@@ -212,7 +226,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	SynthesisContext context(g, func, channels, debug);
 	context.func.name = g.name;
 
-	if (debug) { cout << endl << "?? FLAT ENOUGH FOR SYNTHESIS? " << std::boolalpha << g.isFlat() << endl << endl; }
+	if (context.debug) { cout << endl << "?? FLAT ENOUGH FOR SYNTHESIS? " << std::boolalpha << g.isFlat() << endl << endl; }
 
 	// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
 	petri::iterator dominator;
@@ -247,7 +261,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 			break;
 		}
 	}
-	//cout << endl << "SYNTH DOM> " << dominator.to_string() << endl;
+	if (context.debug) { cout << endl << "SYNTH DOM> " << dominator.to_string() << endl; }
 
 	// Capture split-less/branch-less groups too
 	if (dominator == -1) {
@@ -269,7 +283,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 
 	// Crawl each branch in flattened chp::graph
 	for (const petri::iterator &branch_head : g.super::next(dominator)) {
-		std::set<int> branch_transition_idxs = get_branch_transitions(g, dominator, branch_head);
+		std::set<int> branch_transition_idxs = get_branch_transitions(g, dominator, branch_head, context);
 
 		// Identify condition's predicate/condition, if there is one
 		arithmetic::Expression guard = g.transitions[branch_head.index].guard;
