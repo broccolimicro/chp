@@ -584,44 +584,36 @@ void graph::expand() {
 }
 
 void graph::flatten(bool debug) {
-	if (debug) { cout << "¿Yµ wWµøT?" << endl; }
+	if (debug) { cout << "¿Yµ wWµøT? " << this->name << endl; }
 
 	if (!this->split_groups_ready) {
 		this->compute_split_groups();
 	}
 
-	// Place index of split -> transition indices
-	//TODO: replace indices w/ iterators
-	std::map<int, std::set<int>> split_places;
+	// Index of places w/ multiple outputs -> Indices of their output transitions
+	std::map<size_t, std::set<size_t>> split_places;
 
-	// TODO: extract this directly from graph, which was already traversed
-	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
-		if (not this->transitions.is_valid(transition_idx)) continue;
-		//const petri::transition &transition = this->transitions[transition_idx];
+	for (const petri::iterator &place : this->get_places()) {
+		std::vector<petri::iterator> out_transitions = this->super::next(place);
 
-		// Identify split groups
-		petri::iterator it(petri::transition::type, (int)transition_idx);
-		const vector<petri::split_group> &new_split_groups = this->split_groups_of(
-				petri::composition::choice, it);
+		if (out_transitions.size() > 1) {
+			//TODO: prune
+			//std::set<size_t> out_transition_idxs = out_transitions | std::views::transform([](const petri::iterator &it) { return it.index; });
+			//split_places[place.index] = std::set<size_t>(out_transition_idxs.begin(), out_transition_idxs.end());
 
-		if (!new_split_groups.empty()) {
-			for (const petri::split_group &split_group : new_split_groups) {
-
-				if (!split_group.branch.empty()) {
-					split_places[split_group.split].insert(split_group.branch[0]);
-
-				} else {
-					cerr << "ERROR: a split_group with no branches! " << split_group.to_string() << endl;
-				}
+			for (petri::iterator transition : out_transitions) {
+				split_places[place.index].insert(transition.index);
 			}
 		}
 	}
-	//TODO: simpler implementation: traverse all places & filter for those with next()'s > 1
-	//TODO: Is my earlier "split_places" definition at least more performant? Prioritize readability
 
 	if (split_places.empty()) {
 		//TODO: what if no splits? already flattened? Brainstorm example
 		// aha! e.g. see ds_adder_flat where shared transitions need to be duplicated (s & co assignment)
+		if (debug) {
+			cout << "Why no split places?" << endl
+				<< "¡Yµ wWµøT!" << endl << endl;
+		}
 		return;
 	}
 
@@ -637,6 +629,11 @@ void graph::flatten(bool debug) {
 	// Project out a subgraph of only the directed ins&outs between place-based splits
 	// Also identify trailing children (sequences of transitions) to be merged
 	for (const auto &[place_idx, transition_idxs] : split_places) {
+		//TODO: iterate over places for the modern, idiomatic way (w/o pre-pass for split_groups) (oh, do we need the projection pre-explored so we can do quick set-membership look-ups?
+		//const vector<petri::iterator> &out_transitions = this->super::out(place_idx);
+		//if (out_transitions.size() < 2) { continue; }
+		//vector <size_t> transition_idxs = ;
+
 		for (const auto &split_transition_idx : transition_idxs) {
 			std::set<petri::iterator> transition_sequence_members;
 			std::vector<petri::iterator> transition_sequence;
@@ -885,19 +882,40 @@ void graph::flatten(bool debug) {
 	state &marking = this->reset[0];  //TODO: handle multiple resets in this->reset?
 	int start_idx = marking.tokens[0].index; //TODO: handle multi-token markings
 	petri::iterator start(place::type, start_idx);
-
 	if (debug) { cout << endl << endl << "=== RESET>" << start.to_string() << endl; }
-	set<petri::iterator> visited;
-	visited.insert(start);
-	while (start != dominator) {
 
-		petri::iterator next = this->unzip_forwards(start);
-		if (debug) { cout << next.to_string() << " "; }
+	// Unzip all merge-places (multiple inputs, one output) to dominator
+	//TODO: fix multiple recursively, not just closest ancestor to dominator
+	petri::iterator final_merge(dominator);
+	while (this->super::prev(final_merge).size() == 1) {
+			final_merge = this->super::prev(final_merge)[0];
+	}
+
+	if (debug) { cout << "final_merge: " << final_merge.to_string() << endl; }
+
+	set<petri::iterator> visited;
+	visited.insert(final_merge);
+	while (final_merge != dominator) {
+
+		petri::iterator next = this->unzip_forwards(final_merge);
+		if (debug) {
+			cout << next << " "; //next.to_string() << " ";
+		}
 
 		if (visited.contains(next)) { break; }  // Detect cycles
-		if (visited.size() > 64) { break; }  //HACK: detect runaway bug
+		if (visited.size() > 64) {
+			cerr << "ERROR: Unable to unzip to dominator" << endl;
+			break;
+		}  //TODO: HACK: detect divergent runaway bug
+		//if (next == start) { 
+		//	if (debug) {
+		//		cerr << "ERROR: Unable to unzip to dominator" << endl;
+		//	}
+		//	break;
+		//}
+
 		visited.insert(next);
-		start = next;
+		final_merge = next;
 	}
 
 	if (marking.tokens.size() > 1) {
@@ -912,7 +930,7 @@ void graph::flatten(bool debug) {
 	this->split_groups_ready = false;
 	this->compute_split_groups();
 
-	if (debug) { cout << "¡Yµ wWµøT!" << endl; }
+	if (debug) { cout << "¡Yµ wWµøT!" << endl << endl; }
 }
 
 
