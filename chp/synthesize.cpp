@@ -1,10 +1,10 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <queue>
 #include <ranges>
 #include <string>
 #include <vector>
-#include <queue>
 
 #include <arithmetic/algorithm.h>
 #include <chp/graph.h>
@@ -90,13 +90,11 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx
 			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
 			if (context.debug) { cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl; }
 
-			////TODO: don't forget to send raw constants (e.g. Operand::intOf(1)), not just vars
 			////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
 			arithmetic::Expression send_expr = arithmetic::subExpr(e, operation.operands[2]);
+			//send_expr.minimize();
 			synthesizeChannelsInExpression(send_expr, condition_idx, context);
-
-			send_expr.minimize();
-			send_expr.apply(context.channels);
+			//if (!isSubexpression) { send_expr.apply(context.channels); }
 			context.func.conds[condition_idx].req(flow_operand, send_expr);
 
 			if (context.debug) {
@@ -139,7 +137,7 @@ int synthesizeConditionFromTransitions(
 	synthesizeChannelsInExpression(predicate, condition_idx, context);
 
 	predicate.minimize();
-	predicate.apply(context.channels);
+	//predicate.apply(context.channels);
 	context.func.conds[condition_idx].valid = predicate;
 
 	for (int transition_idx : transitions) {
@@ -166,7 +164,7 @@ int synthesizeConditionFromTransitions(
 
 					//TODO: Ignore local-only temporary variables
 					expr.minimize();
-					expr.apply(context.channels);
+					//expr.apply(context.channels);
 					cond.mem(flow_operand, expr);
 
 					if (context.debug) {
@@ -287,15 +285,30 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 
 		// Identify condition's predicate/condition, if there is one
 		arithmetic::Expression guard = g.transitions[branch_head.index].guard;
-		//if (!guard.top.isUndef()) { //TODO: ??? why is there a constant
-		guard = guard.isValid() ? Expression::boolOf(true) : guard;
 
+		//guard = guard.isValid() ? Expression::boolOf(true) : guard;
 		synthesizeConditionFromTransitions(guard, branch_transition_idxs, context);
 
 		//std::list<int> branch_transition_idxs;
 		////auto iterator_to_transition = [&g](const petri::iterator &it) { return g.transitions[it.index]; };
 		//std::transform(branch_transitions.begin(), branch_transitions.end(), branch_transition_idxs.begin(),
 		//		[](const petri::iterator &it) { return it.index; });
+	}
+
+	// Apply all mappings post-analysis
+	for (auto condIt = func.conds.begin(); condIt != func.conds.end(); condIt++) {
+		condIt->valid.minimize();
+		condIt->valid.apply(context.channels);
+
+		for (auto condRegIt = condIt->regs.begin(); condRegIt != condIt->regs.end(); condRegIt++) {
+			condRegIt->second.minimize();
+			condRegIt->second.apply(context.channels);
+		}
+
+		for (auto condOutIt = condIt->outs.begin(); condOutIt != condIt->outs.end(); condOutIt++) {
+			condOutIt->second.minimize();
+			condOutIt->second.apply(context.channels);
+		}
 	}
 
 	return context.func;
