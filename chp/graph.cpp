@@ -270,37 +270,37 @@ arithmetic::Parallel &graph::term(term_index idx) {
 	return transitions[idx.index].action.terms[idx.term];
 }
 
-petri::mapping graph::merge(graph g) {
-	mapping netMap((int)g.vars.size());
+Mapping<petri::iterator> graph::merge(graph g) {
+	Mapping<int> netMap(-1, false);
 
 	// Add all of the vars and look for duplicates
 	int count = (int)vars.size();
 	for (int i = 0; i < (int)g.vars.size(); i++) {
-		netMap.nets[i] = (int)vars.size();
+		int uid = (int)vars.size();
 		vector<int> remote;
 		for (int j = 0; j < count; j++) {
 			if (vars[j].name == g.vars[i].name) {
 				if (vars[j].region == g.vars[i].region) {
-					netMap.nets[i] = j;
+					uid = j;
 				}
 				remote.push_back(j);
 			}
 		}
 
-		if (netMap.nets[i] >= (int)vars.size()) {
+		netMap.set(i, uid);
+		if (uid >= (int)vars.size()) {
 			vars.push_back(g.vars[i]);
 			vars.back().remote = remote;
 		}
 	}
 
 	// Fill in the remote vars
-	for (int i = 0; i < (int)netMap.nets.size(); i++) {
-		int k = netMap.nets[i];
-		for (int j = 0; j < (int)g.vars[i].remote.size(); j++) {
-			vars[k].remote.push_back(netMap.map(g.vars[i].remote[j]));
+	for (auto i = netMap.fwd.begin(); i != netMap.fwd.end(); i++) {
+		for (int j = 0; j < (int)g.vars[i->first].remote.size(); j++) {
+			vars[i->second].remote.push_back(netMap.map(g.vars[i->first].remote[j]));
 		}
-		sort(vars[k].remote.begin(), vars[k].remote.end());
-		vars[k].remote.erase(unique(vars[k].remote.begin(), vars[k].remote.end()), vars[k].remote.end());
+		sort(vars[i->second].remote.begin(), vars[i->second].remote.end());
+		vars[i->second].remote.erase(unique(vars[i->second].remote.begin(), vars[i->second].remote.end()), vars[i->second].remote.end());
 	}
 
 	for (int i = 0; i < (int)g.transitions.size(); i++) {

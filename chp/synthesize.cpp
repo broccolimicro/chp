@@ -24,7 +24,7 @@ namespace chp {
 struct SynthesisContext {
 	const chp::graph& g;
 	flow::Func &func;
-	mapping &channels;  // Mapping from CHP variable indices to flow variable indices
+	Mapping<int> &channels;  // Mapping from CHP variable indices to flow variable indices
 	bool debug;
 };
 
@@ -220,7 +220,7 @@ std::set<int> get_branch_transitions(const graph &g, const petri::iterator &domi
 
 flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	flow::Func func;
-	mapping channels;
+	Mapping<int> channels(-1, false);
 	SynthesisContext context(g, func, channels, debug);
 	context.func.name = g.name;
 

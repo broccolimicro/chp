@@ -141,7 +141,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	arithmetic::Parallel &term(term_index idx);
 
 	using super::merge;
-	petri::mapping merge(graph g);
+	Mapping<petri::iterator> merge(graph g);
 
 	void post_process(bool proper_nesting=false, bool aggressive=false);
 	void decompose();
