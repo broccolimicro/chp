@@ -118,7 +118,14 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx
 			//e.sub.elems.eraseExpr() // DO NOT modify while iterating over
 			//TODO: emplace_at new_probe_operation into SimpleOperationSet (or just the Operand into elems)
 
-		} //TODO: else {}  for built-in functions?
+		} else { // built-in functions (.e.g. "valid")
+
+			//TODO: preserve multiple operands, not just one
+			if (operation.operands.size() < 2) { continue; }  // only a func_name w/ no params? no subexpr to synthesize
+			arithmetic::Expression call_expr = arithmetic::subExpr(e, operation.operands[1]);
+			if (context.debug) { cout << "* calling \"" << func_name << "\"(" << call_expr << ")" << endl; }
+			synthesizeChannelsInExpression(call_expr, condition_idx, context);
+		}
 	}
 }
 
