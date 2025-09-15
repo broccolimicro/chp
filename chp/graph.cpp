@@ -306,8 +306,8 @@ Mapping<petri::iterator> graph::merge(graph g) {
 	for (int i = 0; i < (int)g.transitions.size(); i++) {
 		if (not g.transitions.is_valid(i)) continue;
 
-		g.transitions[i].action.apply(netMap);
-		g.transitions[i].guard.apply(netMap);
+		g.transitions[i].action.applyVars(netMap);
+		g.transitions[i].guard.applyVars(netMap);
 	}
 
 	// Remap all expressions to new vars

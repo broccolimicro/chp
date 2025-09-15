@@ -38,7 +38,7 @@ arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, cons
 
 	// Get or set flow operand for this channel
 	Operand flow_operand;
-	if (context.channels.has(chp_var_idx)) {
+	if (context.channels.mapsFrom(chp_var_idx)) {
 		int flow_var_idx = context.channels.map(chp_var_idx);
 		flow_operand = Operand::varOf(flow_var_idx);  //TODO: preserve other Operand props?
 
@@ -229,7 +229,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
 	petri::iterator dominator;
 
-	for (int place_idx = 0; place_idx < g.places.size(); place_idx++) {
+	for (int place_idx = 0; place_idx < (int)g.places.size(); place_idx++) {
 		if (not g.places.is_valid(place_idx)) continue;
 
 		petri::iterator place_it(place::type, place_idx);
@@ -268,7 +268,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 		//throw std::runtime_error(msg);
 
 		std::set<int> all_transition_idxs;
-		for (int i = 0; i < g.transitions.size(); i++) {
+		for (int i = 0; i < (int)g.transitions.size(); i++) {
 			if (g.transitions.is_valid(i)) {
 				all_transition_idxs.insert(i);
 			}
@@ -298,16 +298,16 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	// Apply all mappings post-analysis
 	for (auto condIt = func.conds.begin(); condIt != func.conds.end(); condIt++) {
 		condIt->valid.minimize();
-		condIt->valid.apply(context.channels);
+		condIt->valid.applyVars(context.channels);
 
 		for (auto condRegIt = condIt->regs.begin(); condRegIt != condIt->regs.end(); condRegIt++) {
 			condRegIt->second.minimize();
-			condRegIt->second.apply(context.channels);
+			condRegIt->second.applyVars(context.channels);
 		}
 
 		for (auto condOutIt = condIt->outs.begin(); condOutIt != condIt->outs.end(); condOutIt++) {
 			condOutIt->second.minimize();
-			condOutIt->second.apply(context.channels);
+			condOutIt->second.applyVars(context.channels);
 		}
 	}
 
