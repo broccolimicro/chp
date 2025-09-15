@@ -34,12 +34,12 @@ std::ostream& operator<<(std::ostream &os, const SynthesisContext &c) {
 }
 
 
-arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, const int &chp_var_idx, const flow::Net::Purpose &purpose, SynthesisContext &context) {
+arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, const size_t &chp_var_idx, const flow::Net::Purpose &purpose, SynthesisContext &context) {
 
 	// Get or set flow operand for this channel
 	Operand flow_operand;
 	if (context.channels.mapsFrom(chp_var_idx)) {
-		int flow_var_idx = context.channels.map(chp_var_idx);
+		size_t flow_var_idx = context.channels.map(chp_var_idx);
 		flow_operand = Operand::varOf(flow_var_idx);  //TODO: preserve other Operand props?
 
 		if (context.debug) {
@@ -51,11 +51,11 @@ arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, cons
 		//TODO: pipe appropriate width annotations via SynthesisContext
 		size_t channel_width = (!chp_var_name.empty() && chp_var_name.back() == 'c') ? 1 : DATA_CHANNEL_WIDTH;  // Hack for short-term testing
 		flow_operand = context.func.pushNet(chp_var_name, flow::Type(flow::Type::FIXED, channel_width), purpose);
-		context.channels.set(chp_var_idx, static_cast<int>(flow_operand.index));
+		context.channels.set(chp_var_idx, flow_operand.index);
 
 		if (context.debug) {
 			cout << "? MISS(" << chp_var_name << " @ CHP[" << chp_var_idx
-				<< "]) => Flow[" << static_cast<int>(flow_operand.index) << "]" << endl;
+				<< "]) => Flow[" << flow_operand.index << "]" << endl;
 			cout << context;
 		}
 	}
@@ -65,7 +65,7 @@ arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, cons
 
 
 // Crawl sub-expression for vars that represent Channel names, then categorize them for context.func
-void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx, SynthesisContext &context) {
+void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_idx, SynthesisContext &context) {
 	//auto operand_is_var = [](const arithmetic::Operand& op) -> bool { return op.isVar(); };
 	//auto operand_to_net = [&g](const arithmetic::Operand& op) -> std::string { return context.g.netAt(op.index); };
 
@@ -130,9 +130,9 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, int condition_idx
 }
 
 
-int synthesizeConditionFromTransitions(
+size_t synthesizeConditionFromTransitions(
 		arithmetic::Expression predicate,
-		const std::set<int> &transitions,
+		const std::set<size_t> &transitions,
 		SynthesisContext &context) {
 
 	if (transitions.empty()) {
@@ -140,15 +140,15 @@ int synthesizeConditionFromTransitions(
 	}
 
 	// Properly synthesize condition predicate before assigning it to the condition
-	int condition_idx = context.func.pushCond(Expression::undef());
+	size_t condition_idx = context.func.pushCond(Expression::undef());
 	synthesizeChannelsInExpression(predicate, condition_idx, context);
 
 	predicate.minimize();
 	//predicate.apply(context.channels);
 	context.func.conds[condition_idx].valid = predicate;
 
-	for (int transition_idx : transitions) {
-		if (transition_idx < 0 || transition_idx >= (int)context.g.transitions.size()) {
+	for (size_t transition_idx : transitions) {
+		if (transition_idx < 0 || transition_idx >= context.g.transitions.size()) {
 			continue;  // skip invalid transitions
 		}
 
@@ -166,7 +166,7 @@ int synthesizeConditionFromTransitions(
 				// Are we assigning to a local variable?
 				if (action.variable != -1) {
 					std::string chp_var_name = context.g.netAt(action.variable);
-					int chp_var_idx = action.variable;
+					size_t chp_var_idx = action.variable;
 					Operand flow_operand = synthesizeChannelFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, context);
 
 					//TODO: Ignore local-only temporary variables
@@ -187,8 +187,8 @@ int synthesizeConditionFromTransitions(
 }
 
 
-std::set<int> get_branch_transitions(const graph &g, const petri::iterator &dominator, const petri::iterator &branch_head, const SynthesisContext &context) {
-	std::set<int> branch_transition_idxs = { branch_head.index };
+std::set<size_t> get_branch_transitions(const graph &g, const petri::iterator &dominator, const petri::iterator &branch_head, const SynthesisContext &context) {
+	std::set<size_t> branch_transition_idxs = { static_cast<size_t>(branch_head.index) };
 
 	// Breadth-first crawl every path of this branch to dominator
 	std::set<petri::iterator> visited;
@@ -217,7 +217,7 @@ std::set<int> get_branch_transitions(const graph &g, const petri::iterator &domi
 
 	if (context.debug) {
 		cout << endl << "_=-+_=-+_=-+_=-> BRANCH: ";
-		std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<int>(cout, " "));
+		std::copy(branch_transition_idxs.begin(), branch_transition_idxs.end(), ostream_iterator<size_t>(cout, " "));
 		cout << endl;
 	}
 
@@ -236,7 +236,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
 	petri::iterator dominator;
 
-	for (int place_idx = 0; place_idx < (int)g.places.size(); place_idx++) {
+	for (size_t place_idx = 0; place_idx < g.places.size(); place_idx++) {
 		if (not g.places.is_valid(place_idx)) continue;
 
 		petri::iterator place_it(place::type, place_idx);
@@ -274,8 +274,8 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 		//cerr << msg << endl;
 		//throw std::runtime_error(msg);
 
-		std::set<int> all_transition_idxs;
-		for (int i = 0; i < (int)g.transitions.size(); i++) {
+		std::set<size_t> all_transition_idxs;
+		for (size_t i = 0; i < g.transitions.size(); i++) {
 			if (g.transitions.is_valid(i)) {
 				all_transition_idxs.insert(i);
 			}
@@ -288,7 +288,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 
 	// Crawl each branch in flattened chp::graph
 	for (const petri::iterator &branch_head : g.super::next(dominator)) {
-		std::set<int> branch_transition_idxs = get_branch_transitions(g, dominator, branch_head, context);
+		std::set<size_t> branch_transition_idxs = get_branch_transitions(g, dominator, branch_head, context);
 
 		// Identify condition's predicate/condition, if there is one
 		arithmetic::Expression guard = g.transitions[branch_head.index].guard;
@@ -296,7 +296,7 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 		//guard = guard.isValid() ? Expression::boolOf(true) : guard;
 		synthesizeConditionFromTransitions(guard, branch_transition_idxs, context);
 
-		//std::list<int> branch_transition_idxs;
+		//std::list<size_t> branch_transition_idxs;
 		////auto iterator_to_transition = [&g](const petri::iterator &it) { return g.transitions[it.index]; };
 		//std::transform(branch_transitions.begin(), branch_transitions.end(), branch_transition_idxs.begin(),
 		//		[](const petri::iterator &it) { return it.index; });
