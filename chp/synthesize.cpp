@@ -91,10 +91,10 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 			if (context.debug) { cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl; }
 
 			////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
-			arithmetic::Expression send_expr = arithmetic::subExpr(e, operation.operands[2]);
-			//send_expr.minimize();
+			Operand send_operand = operation.operands[2];
+			arithmetic::Expression send_expr = send_operand.isExpr() ? arithmetic::subExpr(e, send_operand) : Expression(send_operand);
+
 			synthesizeChannelsInExpression(send_expr, condition_idx, context);
-			//if (!isSubexpression) { send_expr.apply(context.channels); }
 			context.func.conds[condition_idx].req(flow_operand, send_expr);
 
 			if (context.debug) {
@@ -113,7 +113,6 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 			const size_t &channel_idx = probe_var.index;
 			const string &channel_name = context.g.vars[channel_idx].name;
 			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
-			//probe_var.apply(context.channels);
 
 			//e.sub.elems.eraseExpr() // DO NOT modify while iterating over
 			//TODO: emplace_at new_probe_operation into SimpleOperationSet (or just the Operand into elems)
@@ -144,7 +143,6 @@ size_t synthesizeConditionFromTransitions(
 	synthesizeChannelsInExpression(predicate, condition_idx, context);
 
 	predicate.minimize();
-	//predicate.apply(context.channels);
 	context.func.conds[condition_idx].valid = predicate;
 
 	for (size_t transition_idx : transitions) {
