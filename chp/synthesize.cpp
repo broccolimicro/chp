@@ -63,6 +63,64 @@ arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, cons
 	return flow_operand;
 }
 
+//TODO: it's works! now simplify, more robust, better name, & support recursion
+arithmetic::Expression stripCalls(const arithmetic::Expression &expr, const vector<string> &names) {
+    // Base case: if the expression is not valid, return it as is
+    //if (!expr.isValid() || expr.isNull()) {
+    //    return expr;
+    //}
+
+    // Get the operation at the top of the expression
+    const arithmetic::Operation* op = expr.getExpr(expr.top.index);
+    if (!op) {
+        return expr;  // Not an operation, return as is
+    }
+
+    // If this is a function call, return its argument
+    if (op->func == arithmetic::Operation::CALL && op->operands.size() >= 2) {
+			string func_name = op->operands[0].cnst.sval;
+
+			//TODO: if any in names
+			if (func_name == "recv" || func_name == "probe") {
+				
+        // The second operand is the expression to return
+        // (first is the function name)
+        Operand arg = op->operands[1];
+        if (arg.isExpr()) {
+            // Recursively process the argument
+            return stripCalls(Expression(arg), names);
+        }
+        return Expression(arg);  // Return the argument as is
+			}
+    }
+
+    // For other operations, recursively process all operands
+    vector<Operand> newOperands;
+    bool anyChanged = false;
+
+		//TODO: support multi-level replace
+    //for (const auto& operand : op->operands) {
+    //    if (operand.isExpr()) {
+    //        // Recursively process subexpressions
+    //        Expression processed = stripCalls(Expression(operand), names);
+    //        if (!areSame(processed, Expression(operand))) {
+    //            anyChanged = true;
+    //        }
+    //        newOperands.push_back(processed.top);
+    //    } else {
+    //        newOperands.push_back(operand);
+    //    }
+    //}
+
+    // If no operands changed, return the original expression
+    if (!anyChanged) {
+        return expr;
+    }
+
+    // Create a new expression with the processed operands
+    return Expression(op->func, newOperands);
+}
+
 
 // Crawl sub-expression for vars that represent Channel names, then categorize them for context.func
 void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_idx, SynthesisContext &context) {
@@ -169,8 +227,8 @@ size_t synthesizeConditionFromTransitions(
 
 					//TODO: Ignore local-only temporary variables
 					expr.minimize();
-					//expr.apply(context.channels);
-					cond.mem(flow_operand, expr);
+					Expression mem_expr = stripCalls(expr, {"recv", "probe"});
+					cond.mem(flow_operand, mem_expr);
 
 					if (context.debug) {
 						cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
