@@ -63,64 +63,6 @@ arithmetic::Operand synthesizeChannelFromCHPVar(const string &chp_var_name, cons
 	return flow_operand;
 }
 
-//TODO: it's works! now simplify, more robust, better name, & support recursion
-arithmetic::Expression stripCalls(const arithmetic::Expression &expr, const vector<string> &names) {
-    // Base case: if the expression is not valid, return it as is
-    //if (!expr.isValid() || expr.isNull()) {
-    //    return expr;
-    //}
-
-    // Get the operation at the top of the expression
-    const arithmetic::Operation* op = expr.getExpr(expr.top.index);
-    if (!op) {
-        return expr;  // Not an operation, return as is
-    }
-
-    // If this is a function call, return its argument
-    if (op->func == arithmetic::Operation::CALL && op->operands.size() >= 2) {
-			string func_name = op->operands[0].cnst.sval;
-
-			//TODO: if any in names
-			if (func_name == "recv" || func_name == "probe") {
-				
-        // The second operand is the expression to return
-        // (first is the function name)
-        Operand arg = op->operands[1];
-        if (arg.isExpr()) {
-            // Recursively process the argument
-            return stripCalls(Expression(arg), names);
-        }
-        return Expression(arg);  // Return the argument as is
-			}
-    }
-
-    // For other operations, recursively process all operands
-    vector<Operand> newOperands;
-    bool anyChanged = false;
-
-		//TODO: support multi-level replace
-    //for (const auto& operand : op->operands) {
-    //    if (operand.isExpr()) {
-    //        // Recursively process subexpressions
-    //        Expression processed = stripCalls(Expression(operand), names);
-    //        if (!areSame(processed, Expression(operand))) {
-    //            anyChanged = true;
-    //        }
-    //        newOperands.push_back(processed.top);
-    //    } else {
-    //        newOperands.push_back(operand);
-    //    }
-    //}
-
-    // If no operands changed, return the original expression
-    if (!anyChanged) {
-        return expr;
-    }
-
-    // Create a new expression with the processed operands
-    return Expression(op->func, newOperands);
-}
-
 
 // Crawl sub-expression for vars that represent Channel names, then categorize them for context.func
 void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_idx, SynthesisContext &context) {
@@ -132,7 +74,6 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 		if (operation.func != arithmetic::Operation::OpType::CALL) { continue; }  //TODO: other operations of interest?
 
 		std::string func_name = operation.operands[0].cnst.sval;
-
 		//TODO: optimize perf (don't do string comparison)
 		if (func_name == "recv") {
 			size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
@@ -144,12 +85,13 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 
 		} else if (func_name == "send") {
 			size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
-			string channel_name = context.g.vars[channel_idx].name;
+			const string &channel_name = context.g.vars[channel_idx].name;
 			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
 			if (context.debug) { cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl; }
 
 			////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
-			Operand send_operand = operation.operands[2];
+			const Operand &send_operand = operation.operands[2];
+			//const arithmetic::Operation &send_operation = *e.getExpr(operation.operands[2].index);
 			arithmetic::Expression send_expr = send_operand.isExpr() ? arithmetic::subExpr(e, send_operand) : Expression(send_operand);
 
 			synthesizeChannelsInExpression(send_expr, condition_idx, context);
@@ -224,15 +166,11 @@ size_t synthesizeConditionFromTransitions(
 					std::string chp_var_name = context.g.netAt(action.variable);
 					size_t chp_var_idx = action.variable;
 					Operand flow_operand = synthesizeChannelFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, context);
-
-					//TODO: Ignore local-only temporary variables
-					expr.minimize();
-					Expression mem_expr = stripCalls(expr, {"recv", "probe"});
-					cond.mem(flow_operand, mem_expr);
+					cond.mem(flow_operand, expr);
 
 					if (context.debug) {
 						cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
-						<< "in expr: " << expr.to_string() << endl;
+							<< "in expr: " << expr.to_string() << endl;
 					}
 				}
 			}
@@ -305,8 +243,8 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 		// Is graph ready, in flat form?
 		if (in_count != out_count) {
 			string msg = "ERROR: split-place with unequal ins & outs detected [" \
-				+ std::to_string(place_idx) + "] => (" + std::to_string(in_count) + ", " + std::to_string(out_count) \
-				+ "). chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
+										+ std::to_string(place_idx) + "] => (" + std::to_string(in_count) + ", " + std::to_string(out_count) \
+										+ "). chp::graph isn't ready for FlowSynthesis, because it's not `flat`. chp::graph::flatten() _should_ get it ready.";
 			cerr << msg << endl;
 			//throw std::runtime_error(msg);
 		}
@@ -359,16 +297,27 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	}
 
 	// Apply all mappings post-analysis
+	Expression x = Expression::varOf(0);
+	arithmetic::RuleSet substitutions({
+		//(a[b:c]) > (),
+		(arithmetic::call("recv", {x})) > (x),
+		(arithmetic::call("probe", {x})) > (x),
+		(1 && x) > (x),
+		(0 || x) > (x),
+	});
 	for (auto condIt = func.conds.begin(); condIt != func.conds.end(); condIt++) {
+		condIt->valid.minimize(substitutions);
 		condIt->valid.minimize();
 		condIt->valid.applyVars(context.channels);
 
 		for (auto condRegIt = condIt->regs.begin(); condRegIt != condIt->regs.end(); condRegIt++) {
+			condRegIt->second.minimize(substitutions);
 			condRegIt->second.minimize();
 			condRegIt->second.applyVars(context.channels);
 		}
 
 		for (auto condOutIt = condIt->outs.begin(); condOutIt != condIt->outs.end(); condOutIt++) {
+			condOutIt->second.minimize(substitutions);
 			condOutIt->second.minimize();
 			condOutIt->second.applyVars(context.channels);
 		}
