@@ -339,23 +339,23 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 
 		//TODO: Can there be a non-always predicate in a guard-less default branch?
 		synthesizeConditionFromTransitions(Expression::boolOf(true), all_transition_idxs, context);
-		return context.func;
-	}
 
-	// Crawl each branch in flattened chp::graph
-	for (const petri::iterator &branch_head : g.super::next(dominator)) {
-		std::set<size_t> branch_transition_idxs = get_branch_transitions(g, dominator, branch_head, context);
+	} else {
+		// Crawl each branch in flattened chp::graph
+		for (const petri::iterator &branch_head : g.super::next(dominator)) {
+			std::set<size_t> branch_transition_idxs = get_branch_transitions(g, dominator, branch_head, context);
 
-		// Identify condition's predicate/condition, if there is one
-		arithmetic::Expression guard = g.transitions[branch_head.index].guard;
+			// Identify condition's predicate/condition, if there is one
+			arithmetic::Expression guard = g.transitions[branch_head.index].guard;
 
-		//guard = guard.isValid() ? Expression::boolOf(true) : guard;
-		synthesizeConditionFromTransitions(guard, branch_transition_idxs, context);
+			//guard = guard.isValid() ? Expression::boolOf(true) : guard;
+			synthesizeConditionFromTransitions(guard, branch_transition_idxs, context);
 
-		//std::list<size_t> branch_transition_idxs;
-		////auto iterator_to_transition = [&g](const petri::iterator &it) { return g.transitions[it.index]; };
-		//std::transform(branch_transitions.begin(), branch_transitions.end(), branch_transition_idxs.begin(),
-		//		[](const petri::iterator &it) { return it.index; });
+			//std::list<size_t> branch_transition_idxs;
+			////auto iterator_to_transition = [&g](const petri::iterator &it) { return g.transitions[it.index]; };
+			//std::transform(branch_transitions.begin(), branch_transitions.end(), branch_transition_idxs.begin(),
+			//		[](const petri::iterator &it) { return it.index; });
+		}
 	}
 
 	// Apply all mappings post-analysis
