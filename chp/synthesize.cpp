@@ -76,32 +76,34 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 		std::string func_name = operation.operands[0].cnst.sval;
 		//TODO: optimize perf (don't do string comparison)
 		if (func_name == "recv") {
-			size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
-			string channel_name = context.g.vars[channel_idx].name;
-			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
+			size_t channel_idx = lvalueBase(e, e.getExpr(operation.operands[1].index)->operands[0]);
+			if (channel_idx != std::numeric_limits<size_t>::max()) {
+				string channel_name = context.g.vars[channel_idx].name;
+				Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
 
-			context.func.conds[condition_idx].ack(flow_operand);
-			if (context.debug) { cout << "* cond #" << condition_idx << " ack'd " << channel_name << endl; }
-
-		} else if (func_name == "send") {
-			size_t channel_idx = e.getExpr(operation.operands[1].index)->operands[0].index;
-			const string &channel_name = context.g.vars[channel_idx].name;
-			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
-			if (context.debug) { cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl; }
-
-			////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
-			const Operand &send_operand = operation.operands[2];
-			//const arithmetic::Operation &send_operation = *e.getExpr(operation.operands[2].index);
-			arithmetic::Expression send_expr = send_operand.isExpr() ? arithmetic::subExpr(e, send_operand) : Expression(send_operand);
-
-			synthesizeChannelsInExpression(send_expr, condition_idx, context);
-			context.func.conds[condition_idx].req(flow_operand, send_expr);
-
-			if (context.debug) {
-				cout << "* cond #" << condition_idx << " req'd " << channel_name << endl
-					<< "w/ expr: " << send_expr << endl;
+				context.func.conds[condition_idx].ack(flow_operand);
+				if (context.debug) { cout << "* cond #" << condition_idx << " ack'd " << channel_name << endl; }
 			}
+		} else if (func_name == "send") {
+			size_t channel_idx = lvalueBase(e, e.getExpr(operation.operands[1].index)->operands[0]);
+			if (channel_idx != std::numeric_limits<size_t>::max()) {
+				const string &channel_name = context.g.vars[channel_idx].name;
+				Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::OUT, context);
+				if (context.debug) { cout << "* send on " << channel_name << "(" << channel_idx << ")" << endl; }
 
+				////TODO: no magic numbers (e.g. "2" representing assumption of the first 2 parameters fixed
+				const Operand &send_operand = operation.operands[2];
+				//const arithmetic::Operation &send_operation = *e.getExpr(operation.operands[2].index);
+				arithmetic::Expression send_expr = send_operand.isExpr() ? arithmetic::subExpr(e, send_operand) : Expression(send_operand);
+
+				synthesizeChannelsInExpression(send_expr, condition_idx, context);
+				context.func.conds[condition_idx].req(flow_operand, send_expr);
+
+				if (context.debug) {
+					cout << "* cond #" << condition_idx << " req'd " << channel_name << endl
+						<< "w/ expr: " << send_expr << endl;
+				}
+			}
 		} else if (func_name == "probe") {
 			if (context.debug) { cout << "<><> PROBE op <><> " << operation << endl; }
 			size_t expr_idx = operation.operands[1].index;
@@ -110,10 +112,11 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 			arithmetic::Operand probe_var = new_probe_operation.operands[0];
 			if (context.debug) { cout << "<><> PROBE unwrap <><>" << probe_var << endl; }
 
-			const size_t &channel_idx = probe_var.index;
-			const string &channel_name = context.g.vars[channel_idx].name;
-			Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
-
+			size_t channel_idx = lvalueBase(e, probe_var);
+			if (channel_idx != std::numeric_limits<size_t>::max()) {
+				const string &channel_name = context.g.vars[channel_idx].name;
+				Operand flow_operand = synthesizeChannelFromCHPVar(channel_name, channel_idx, flow::Net::IN, context);
+			}
 			//e.sub.elems.eraseExpr() // DO NOT modify while iterating over
 			//TODO: emplace_at new_probe_operation into SimpleOperationSet (or just the Operand into elems)
 
@@ -158,19 +161,21 @@ size_t synthesizeConditionFromTransitions(
 		const arithmetic::Choice &action = transition.action;
 		for (const arithmetic::Parallel &term : action.terms) {
 			for (const arithmetic::Action &action : term.actions) {
-				arithmetic::Expression expr(action.expr);
+				arithmetic::Expression expr(action.rvalue);
 				synthesizeChannelsInExpression(expr, condition_idx, context);
 
 				// Are we assigning to a local variable?
-				if (action.variable != -1) {
-					std::string chp_var_name = context.g.netAt(action.variable);
-					size_t chp_var_idx = action.variable;
-					Operand flow_operand = synthesizeChannelFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, context);
-					cond.mem(flow_operand, expr);
+				if (not action.lvalue.isUndef()) {
+					size_t chp_var_idx = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+					if (chp_var_idx != std::numeric_limits<size_t>::max()) {
+						std::string chp_var_name = context.g.netAt(chp_var_idx);
+						Operand flow_operand = synthesizeChannelFromCHPVar(chp_var_name, chp_var_idx, flow::Net::REG, context);
+						cond.mem(flow_operand, expr);
 
-					if (context.debug) {
-						cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
-							<< "in expr: " << expr.to_string() << endl;
+						if (context.debug) {
+							cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
+								<< "in expr: " << expr.to_string() << endl;
+						}
 					}
 				}
 			}

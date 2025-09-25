@@ -131,6 +131,9 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	string netAt(int uid) const;
 	int netCount() const;
 
+	// TODO(edward.bingham) tie this into the typesystem
+	arithmetic::State U() const;
+
 	using super::create;
 	int create(variable n = variable());
 

@@ -41,7 +41,7 @@ ostream &operator<<(ostream &os, const place &p) {
 }
 
 transition::transition() {
-	guard = arithmetic::Expression::boolOf(true);
+	guard = arithmetic::Expression::vdd();
 	action = true;
 }
 
@@ -55,25 +55,27 @@ transition::~transition()
 
 }
 
-transition transition::merge(int composition, const transition &t0, const transition &t1)
-{
-	transition result;
-	if (composition == petri::parallel or composition == petri::sequence)
-	{
-		for (int i = 0; i < (int)t0.action.terms.size(); i++)
-			for (int j = 0; j < (int)t1.action.terms.size(); j++)
-			{
+transition transition::merge(int composition, const transition &t0, const transition &t1) {
+	if (composition == petri::parallel or composition == petri::sequence) {
+		transition result(t0.guard & t1.guard, false);
+		for (int i = 0; i < (int)t0.action.terms.size(); i++) {
+			for (int j = 0; j < (int)t1.action.terms.size(); j++) {
 				result.action.terms.push_back(arithmetic::Parallel());
 				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t0.action.terms[i].actions.begin(), t0.action.terms[i].actions.end());
 				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t1.action.terms[j].actions.begin(), t1.action.terms[j].actions.end());
 			}
-	}
-	else if (composition == petri::choice)
-	{
+		}
+		result.guard.minimize();
+		return result;
+	} else if (composition == petri::choice) {
+		transition result(t0.guard | t1.guard, false);
 		result.action.terms.insert(result.action.terms.end(), t0.action.terms.begin(), t0.action.terms.end());
 		result.action.terms.insert(result.action.terms.end(), t1.action.terms.begin(), t1.action.terms.end());
+		result.guard.minimize();
+		return result;
 	}
-	return result;
+	//result.guard.minimize();
+	return transition();
 }
 
 bool transition::mergeable(int composition, const transition &t0, const transition &t1)
@@ -204,6 +206,14 @@ int graph::netCount() const {
 	return (int)vars.size();
 }
 
+arithmetic::State graph::U() const {
+	arithmetic::State result;
+	for (size_t i = 0; i < vars.size(); i++) {
+		result.values.push_back(arithmetic::Value::U(arithmetic::Value::INT));
+	}
+	return result;
+}
+
 /**
  * @brief Create a new net in the graph
  * 
@@ -317,8 +327,9 @@ Mapping<petri::iterator> graph::merge(graph g) {
 
 void graph::post_process(bool proper_nesting, bool aggressive) {
 	// Handle Reset Behavior
+
 	bool change = true;
-	/*while (change)
+	while (change)
 	{
 		super::reduce(proper_nesting, aggressive);
 		change = false;
@@ -329,22 +340,25 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 			sim.enabled();
 
 			change = false;
-			for (int j = 0; j < (int)sim.ready.size() and !change; j++)
-			{
+			for (int j = 0; j < (int)sim.ready.size() and !change; j++) {
 				bool firable = transitions[sim.ready[j].index].action.terms.size() <= 1;
-				for (int k = 0; k < (int)sim.ready[j].tokens.size() and firable; k++)
-				{
-					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++)
-						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index)
+				for (int k = 0; k < (int)sim.ready[j].tokens.size() and firable; k++) {
+					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++) {
+						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index) {
 							firable = false;
-					for (int l = 0; l < (int)arcs[petri::place::type].size() and firable; l++)
-						if (arcs[petri::place::type][l].from.index == sim.tokens[sim.ready[j].tokens[k]].index and arcs[petri::place::type][l].to.index != sim.ready[j].index)
+						}
+					}
+					for (int l = 0; l < (int)arcs[petri::place::type].size() and firable; l++) {
+						if (arcs[petri::place::type][l].from.index == sim.tokens[sim.ready[j].tokens[k]].index and arcs[petri::place::type][l].to.index != sim.ready[j].index) {
 							firable = false;
+						}
+					}
 				}
 
 				if (firable) {
 					petri::enabled_transition t = sim.fire(j);
 					reset[i].tokens = sim.tokens;
+					//cout << "firing reset action " << transitions[t.index].guard << "->" << transitions[t.index].action << endl;
 					for (int k = (int)transitions[t.index].action.terms.size()-1; k >= 0; k--) {
 						int idx = i;
 						if (k > 0) {
@@ -352,22 +366,28 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 							reset.push_back(reset[i]);
 						}
 
-						arithmetic::State guard_action;
+						arithmetic::State guard_action = U();
 						passesGuard(reset[idx].encodings, reset[idx].encodings, transitions[t.index].guard, &guard_action);
+						//cout << "passesGuard " << reset[idx].encodings << " " << transitions[t.index].guard << " " << guard_action << endl;
 						// TODO(edward.bingham) set up a global encoding and actually simulate the guards
-						// reset[idx].encodings &= guard_action;
+						reset[idx].encodings &= guard_action;
+						//cout << "evaluating " << transitions[t.index].action.terms[k] << " " << reset[idx].encodings << endl;
 
 						arithmetic::State local = transitions[t.index].action.terms[k].evaluate(reset[idx].encodings);
+						//cout << "result " << local << endl;
 						arithmetic::State remote = local.remote(remote_groups());
+						//cout << "remote " << remote << endl;
 
 						reset[idx].encodings = localAssign(reset[idx].encodings, remote, true);
+						//cout << "localAssign " << reset[idx].encodings << endl;
 					}
 
+					//cout << endl << endl;
 					change = true;
 				}
 			}
 		}
-	}*/
+	}
 
 	change = true;
 	while (change) {
@@ -381,6 +401,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 			if (transitions[i.index].is_vacuous()) {
 				vector<petri::iterator> n = next(i); // places
 				if (n.size() > 1) {
+					//cout << "removing skip T" << i.index << ": " << transitions[i.index].guard << "->" << transitions[i.index].action << endl;
 					vector<petri::iterator> p = prev(i); // places
 					vector<vector<petri::iterator> > pp;
 					for (int j = 0; j < (int)p.size(); j++) {
@@ -406,6 +427,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 						}
 						connect(copies.back(), n[k]);
 					}
+					//cout << "removed skip" << endl;
 					change = true;
 				}
 			}
@@ -418,13 +440,13 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 		// transition on each branch and move the merge down the sequence). This
 		// allows us to merge that guard at the end of the conditional branch into
 		// the transition.
-		/*for (petri::iterator i(place::type, 0); i < (int)places.size() and !change; i++) {
+		/*for (petri::iterator i(place::type, 0); i < (int)places.size() and not change; i++) {
 			if (not is_valid(i)) continue;
 
 			vector<petri::iterator> p = prev(i);
 			vector<petri::iterator> active, passive;
 			for (int k = 0; k < (int)p.size(); k++) {
-				if (transitions[p[k].index].action.is_passive()) {
+				if (transitions[p[k].index].action.isPassive()) {
 					passive.push_back(p[k]);
 				} else {
 					active.push_back(p[k]);
@@ -452,7 +474,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 					// Disconnect this transition
 					for (int l = (int)arcs[petri::transition::type].size()-1; l >= 0; l--) {
 						if (arcs[petri::transition::type][l].from == passive[k]) {
-							disconnect(petri::iterator(petri::transition::type, l));
+							erase_arc(petri::iterator(petri::transition::type, l));
 						}
 					}
 
@@ -473,23 +495,29 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 			}
 		}
 		if (change)
-			continue;
+			continue;*/
 
-		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and !change; i++) {
+		/*for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and not change; i++) {
 			if (not is_valid(i)) continue;
 
-			if (transitions[i.index].action.is_passive()) {
-				vector<petri::iterator> nn = next(next(i)); // transitions
+			vector<petri::iterator> p = prev(i);
+			vector<petri::iterator> n = next(i);
+
+			if (transitions[i.index].action.isVacuous() and (p.size() <= 1u or n.size() <= 1u)) {
+				vector<petri::iterator> nn = next(n); // transitions
 				for (int l = 0; l < (int)nn.size(); l++) {
 					transitions[nn[l].index] = transition::merge(petri::sequence, transitions[i.index], transitions[nn[l].index]);
 				}
+
+				cout << "pinching vacuous action " << i << endl;
 
 				pinch(i);
 				change = true;
 			}
 		}
-		if (change)
-			continue;*/
+		if (change) {
+			continue;
+		}*/
 	}
 }
 

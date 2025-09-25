@@ -129,8 +129,15 @@ simulator::simulator()
 simulator::simulator(graph *base, state initial) {
 	this->base = base;
 	if (base != NULL) {
-		encoding = initial.encodings;
-		global = initial.encodings;
+		encoding = base->U();
+		global = base->U();
+		for (size_t i = 0; i < initial.encodings.values.size(); i++) {
+			encoding.values[i] = initial.encodings.values[i];
+			global.values[i] = initial.encodings.values[i];
+		}
+		//cout << "intitial " << initial.encodings << endl;
+		//cout << "encoding " << encoding << endl;
+		//cout << "global " << global << endl;
 		for (int k = 0; k < (int)initial.tokens.size(); k++) {
 			tokens.push_back(chp::token(initial.tokens[k].index));
 		}
@@ -148,6 +155,11 @@ int simulator::enabled(bool sorted) {
 		internal("", "NULL pointer to simulator::base", __FILE__, __LINE__);
 		return 0;
 	}
+
+	//cout << endl << endl;
+	//for (int i = 0; i < base->vars.size(); i++) {
+	//	cout << "v" << i << ": " << base->vars[i].name << endl;
+	//}
 
 	// Do a pre-screen
 	for (int i = (int)tokens.size()-1; i >= 0; i--)
@@ -235,6 +247,7 @@ int simulator::enabled(bool sorted) {
 							token_found = true;
 							preload.push_back(enabled_transition(a->to.index));
 							preload.back().tokens.push_back(j);
+							preload.back().guard_action = base->U();
 						}
 
 					if (!token_found)
@@ -307,11 +320,18 @@ int simulator::enabled(bool sorted) {
 
 			// As a result of graph::post_process(), all of the guards should have been
 			// merged into the closest assignment.
-			preload[i].depend = arithmetic::Expression::boolOf(true);
+			//cout << endl;
+			//cout << "checking " << base->transitions[preload[i].index].guard << "->" << base->transitions[preload[i].index].action << endl;
+			//cout << "building guard depend=[";
+			preload[i].depend = arithmetic::Expression::vdd();
 			for (int j = 0; j < (int)preload[i].tokens.size(); j++) {
 				preload[i].depend = preload[i].depend & tokens[preload[i].tokens[j]].guard;
+				//cout << tokens[preload[i].tokens[j]].guard << " ";
 			}
 			preload[i].guard = base->transitions[preload[i].index].guard & base->transitions[preload[i].index].action.guard();
+			preload[i].depend.minimize();
+			preload[i].guard.minimize();
+			//cout << "] " << base->transitions[preload[i].index].guard << " " << base->transitions[preload[i].index].action.guard() << endl;
 
 			//preload[i].depend.hide(base->transitions[preload[i].index].local_action.vars());
 		
@@ -325,6 +345,7 @@ int simulator::enabled(bool sorted) {
 			// the propagated guard that have already been acknowledged by other
 			// transitions acknowledged by the base guard and the sequencing.
 			arithmetic::Expression guard = preload[i].depend & preload[i].guard;
+			//cout << "result " << preload[i].depend << " & " << preload[i].guard << " = " << guard << endl;
 
 			// Check for unstable transitions
 			bool previously_enabled = false;
@@ -335,18 +356,24 @@ int simulator::enabled(bool sorted) {
 				}
 			}
 
+			//cout << "evaluating guard " << encoding << " " << global << " " << guard << endl;
 			// Now we check to see if the current state passes the guard
 			int isReady = arithmetic::passesGuard(encoding, global, guard, &preload[i].guard_action);
+			//cout << "found " << isReady << " " << preload[i].guard_action << endl;
 
 			if (isReady < 0 and previously_enabled) {
 				isReady = 0;
 			}
 
+			//cout << "evaluating local action " << base->transitions[preload[i].index].action << " " << encoding << " " << preload[i].guard_action << endl;
 			preload[i].local_action = base->transitions[preload[i].index].action.evaluate(encoding & preload[i].guard_action);
 			preload[i].remote_action = preload[i].local_action.remote(base->remote_groups());
+			//cout << "found " << preload[i].local_action << endl;
 
 			preload[i].stable = (isReady > 0);
+			//cout << "checking vacuous " << global << " " << preload[i].local_action << " " << preload[i].remote_action << " " << preload[i].stable << endl;
 			preload[i].vacuous = arithmetic::vacuousAssign(global, preload[i].remote_action, preload[i].stable);
+			//cout << "found " << preload[i].vacuous << endl;
 			preload[i].stable = preload[i].stable or preload[i].vacuous;
 
 			// if the transition is vacuous, then we've already passed the guard even
@@ -389,6 +416,8 @@ int simulator::enabled(bool sorted) {
 						//cout << "setting token guard:" << export_expression(base->transitions[preload[i].index].guard, *variables).to_string() << " exclude:" << export_expression(exclude, *variables).to_string() << " weak:" << export_expression(weak, *variables).to_string() << " result:" << export_expression(guard, *variables).to_string() << endl;
 					}
 
+					guard.minimize();
+
 					for (int j = 0; j < (int)output.size(); j++)
 					{
 						preload[i].output_marking.push_back((int)tokens.size());
@@ -419,7 +448,7 @@ int simulator::enabled(bool sorted) {
 		vector<int> output = base->next(transition::type, potential[i].index);
 		for (int j = 0; j < (int)output.size(); j++) {
 			potential[i].output_marking.push_back((int)tokens.size());
-			tokens.push_back(token(output[j], arithmetic::Expression::boolOf(true), preload.size()));
+			tokens.push_back(token(output[j], arithmetic::Expression::vdd(), preload.size()));
 		}
 
 		preload.push_back(potential[i]);

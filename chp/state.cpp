@@ -86,8 +86,8 @@ enabled_transition::enabled_transition()
 	index = 0;
 	vacuous = true;
 	stable = true;
-	guard = arithmetic::Expression::boolOf(true);
-	depend = arithmetic::Expression::boolOf(true);
+	guard = arithmetic::Expression::vdd();
+	depend = arithmetic::Expression::vdd();
 }
 
 enabled_transition::enabled_transition(int index)
@@ -95,8 +95,8 @@ enabled_transition::enabled_transition(int index)
 	this->index = index;
 	vacuous = true;
 	stable = true;
-	guard = arithmetic::Expression::boolOf(true);
-	depend = arithmetic::Expression::boolOf(true);
+	guard = arithmetic::Expression::vdd();
+	depend = arithmetic::Expression::vdd();
 }
 
 enabled_transition::enabled_transition(int index, int term)
@@ -104,8 +104,8 @@ enabled_transition::enabled_transition(int index, int term)
 	this->index = index;
 	vacuous = true;
 	stable = true;
-	guard = arithmetic::Expression::boolOf(true);
-	depend = arithmetic::Expression::boolOf(true);
+	guard = arithmetic::Expression::vdd();
+	depend = arithmetic::Expression::vdd();
 }
 
 enabled_transition::~enabled_transition()
@@ -166,14 +166,14 @@ firing::~firing() {
 token::token()
 {
 	index = 0;
-	guard = arithmetic::Expression::boolOf(true);
+	guard = arithmetic::Expression::vdd();
 	cause = -1;
 }
 
 token::token(petri::token t)
 {
 	index = t.index;
-	guard = arithmetic::Expression::boolOf(true);
+	guard = arithmetic::Expression::vdd();
 	cause = -1;
 }
 
