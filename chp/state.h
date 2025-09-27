@@ -83,6 +83,8 @@ struct enabled_transition : petri::enabled_transition
 	// passes the guard.
 	bool stable;
 
+	uint64_t fire_at;
+
 	string to_string(const graph &g);
 };
 

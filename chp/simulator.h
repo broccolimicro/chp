@@ -166,6 +166,8 @@ struct simulator
 	// ready[i].second indexes into base->transitions[loaded[ready[i].first].index].local_action.cubes[] which is the cube in the action of that transition
 	vector<pair<int, int> > ready;
 
+	uint64_t now;
+
 	int enabled(bool sorted = false);
 	enabled_transition fire(int index);
 

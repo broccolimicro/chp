@@ -6,9 +6,9 @@
  */
 
 #include <common/text.h>
-#include <interpret_arithmetic/export.h>
 #include "state.h"
 #include "graph.h"
+#include "expression.h"
 
 namespace chp
 {
@@ -44,7 +44,7 @@ void term_index::hash(hasher &hash) const
 
 string term_index::to_string(const graph &g)
 {
-	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + export_expression(g.transitions[index].guard, g).to_string() + " -> " + export_composition(g.transitions[index].action[term], g).to_string();
+	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + emit_expression(g.transitions[index].guard, g) + " -> " + emit_composition(g.transitions[index].action[term], g);
 }
 
 bool operator<(term_index i, term_index j)
@@ -88,6 +88,7 @@ enabled_transition::enabled_transition()
 	stable = true;
 	guard = arithmetic::Expression::vdd();
 	depend = arithmetic::Expression::vdd();
+	fire_at = 0;
 }
 
 enabled_transition::enabled_transition(int index)
@@ -97,6 +98,7 @@ enabled_transition::enabled_transition(int index)
 	stable = true;
 	guard = arithmetic::Expression::vdd();
 	depend = arithmetic::Expression::vdd();
+	fire_at = 0;
 }
 
 enabled_transition::enabled_transition(int index, int term)
@@ -106,6 +108,7 @@ enabled_transition::enabled_transition(int index, int term)
 	stable = true;
 	guard = arithmetic::Expression::vdd();
 	depend = arithmetic::Expression::vdd();
+	fire_at = 0;
 }
 
 enabled_transition::~enabled_transition()
@@ -115,7 +118,7 @@ enabled_transition::~enabled_transition()
 
 string enabled_transition::to_string(const graph &g)
 {
-	return "T" + ::to_string(index) + ":" + export_expression(g.transitions[index].guard, g).to_string() + " -> " + export_composition(g.transitions[index].action, g).to_string();
+	return "T" + ::to_string(index) + ":" + emit_expression(g.transitions[index].guard, g) + " -> " + emit_composition(g.transitions[index].action, g);
 }
 
 bool operator<(enabled_transition i, enabled_transition j)
@@ -277,7 +280,7 @@ string state::to_string(const graph &g)
 			result += " ";
 		result += ::to_string(tokens[i].index);
 	}
-	result += "} " + export_composition(encodings, g).to_string();
+	result += "} " + emit_composition(encodings, g);
 	return result;
 }
 

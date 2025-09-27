@@ -1,8 +1,9 @@
 #include "simulator.h"
 #include "graph.h"
+#include "expression.h"
 #include <common/text.h>
 #include <common/message.h>
-#include <interpret_arithmetic/export.h>
+#include <common/math.h>
 
 namespace chp
 {
@@ -124,10 +125,12 @@ string deadlock::to_string(const graph &g)
 simulator::simulator()
 {
 	base = NULL;
+	now = 0;
 }
 
 simulator::simulator(graph *base, state initial) {
 	this->base = base;
+	this->now = 0;
 	if (base != NULL) {
 		encoding = base->U();
 		global = base->U();
@@ -352,8 +355,12 @@ int simulator::enabled(bool sorted) {
 			for (int j = 0; j < (int)loaded.size() and not previously_enabled; j++) {
 				if (loaded[j].index == preload[i].index and not loaded[j].vacuous) {
 					preload[i].history = loaded[j].history;
+					preload[i].fire_at = loaded[j].fire_at;
 					previously_enabled = true;
 				}
+			}
+			if (!previously_enabled) {
+				preload[i].fire_at = now + pareto(10000, 5.0);
 			}
 
 			//cout << "evaluating guard " << encoding << " " << global << " " << guard << endl;
@@ -368,6 +375,7 @@ int simulator::enabled(bool sorted) {
 			//cout << "evaluating local action " << base->transitions[preload[i].index].action << " " << encoding << " " << preload[i].guard_action << endl;
 			preload[i].local_action = base->transitions[preload[i].index].action.evaluate(encoding & preload[i].guard_action);
 			preload[i].remote_action = preload[i].local_action.remote(base->remote_groups());
+
 			//cout << "found " << preload[i].local_action << endl;
 
 			preload[i].stable = (isReady > 0);
@@ -413,7 +421,7 @@ int simulator::enabled(bool sorted) {
 						arithmetic::Expression exclude = base->exclusion(preload[i].index);
 						arithmetic::Expression weak = arithmetic::weakestGuard(preload[i].guard, exclude);
 						guard = guard & weak;
-						//cout << "setting token guard:" << export_expression(base->transitions[preload[i].index].guard, *variables).to_string() << " exclude:" << export_expression(exclude, *variables).to_string() << " weak:" << export_expression(weak, *variables).to_string() << " result:" << export_expression(guard, *variables).to_string() << endl;
+						//cout << "setting token guard:" << emit_expression(base->transitions[preload[i].index].guard, *variables) << " exclude:" << emit_expression(exclude, *variables) << " weak:" << emit_expression(weak, *variables) << " result:" << emit_expression(guard, *variables) << endl;
 					}
 
 					guard.minimize();
@@ -478,6 +486,9 @@ enabled_transition simulator::fire(int index)
 
 	enabled_transition t = loaded[ready[index].first];
 	int term = ready[index].second;
+	if (t.fire_at > now) {
+		now = t.fire_at;
+	}
 
 	// We need to go through the potential list of transitions and flatten their input and output tokens.
 	// Since we know that no transition can use the same token twice, we can simply mush them all
