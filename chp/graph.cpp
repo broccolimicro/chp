@@ -622,12 +622,12 @@ void graph::computeControlFlowGraph() {
 			}
 		}
 
-		// Default sequential append
+		// Only leads to 1 transition: could it be in the same block?
 		size_t out_transitions_count = out_transitions.size();
 		if (out_transitions_count == 1) {
 			petri::iterator next_transition_it = out_transitions[0];
 
-			// Edge-case: returning to init entry OR joining a pre-discovered merge
+			// Edge-case: returning to init entry OR joining a pre-discovered merge ahead
 			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
 			if (already_in_block) {
 				size_t block_uid = this->transitionToBlock[next_transition_it.index];
@@ -636,9 +636,17 @@ void graph::computeControlFlowGraph() {
 				continue;
 			}
 
-			//TODO: don't forget CONDITIONAL merges!
-			// Edge-case: discovering a merge (not already in block)
-			size_t next_transition_in_count = this->prev(next_transition_it).size();
+			// Edge-case: discovering a new merge ahead
+			// There might be a merge at the next transition OR even the place on the way!
+			// Pure, self-contained cases where (ONLY 1 transition -> many local-only places -> 1 transition) aren't a concern
+			set<petri::iterator> neighbor_transitions_merging_ahead;
+			for (petri::iterator place_to_next_transition : this->prev(next_transition_it)) {
+				for (petri::iterator neighbor_transition : this->prev(place_to_next_transition)) {
+					neighbor_transitions_merging_ahead.insert(neighbor_transition);
+				}
+			}
+
+			size_t next_transition_in_count = neighbor_transitions_merging_ahead.size();
 			if (next_transition_in_count > 1) {
 
 				// Create new block
@@ -658,14 +666,14 @@ void graph::computeControlFlowGraph() {
 				continue;
 			}
 
-			// Default-case: Append to current block
+			// Default-case (sequence): Append to current block
 			this->controlFlowGraph[current_block_uid].last = next_transition_it;
 			this->controlFlowGraph[current_block_uid].transitions.push_back(next_transition_it);
 			this->transitionToBlock[next_transition_it.index] = current_block.uid;
 			queue.push(next_transition_it);
 			continue;
 
-		//TODO: We assume ALWAYS non-terminating process (i.e. no dead-ends). Properly report malformed failures
+		// We assume ALWAYS non-terminating process (i.e. no dead-ends)
 		} else if (out_transitions_count == 0) {
 			cerr << "ERROR: Terminating / dead-end Transition found. We assume ALWAYS non-terminating processes." << endl;
 			return;
@@ -673,6 +681,7 @@ void graph::computeControlFlowGraph() {
 
 		// Wrap up the current block & initiate new ones
 		for (petri::iterator &next_transition_it : out_transitions) {
+
 			// Has this already been documented? If so, ensure our block connects to theirs
 			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
 			if (already_in_block) {
