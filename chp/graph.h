@@ -126,6 +126,8 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	vector<variable> vars;
 
+	bool controlFlowGraphReady = false;
+
 	int netIndex(string name, bool define=false);
 	int netIndex(string name) const;
 	string netAt(int uid) const;
@@ -152,6 +154,37 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void flatten(bool debug=false);
 	bool isFlat() const;  //TODO: cache in property for quick look-up
 	arithmetic::Expression exclusion(int index) const;
+
+	struct useDefChain {
+		string name;
+		vector<size_t> defs;
+		vector<size_t> uses;
+		//TODO: reaching defs / is_killed
+	};
+
+	struct controlFlowBlock {
+		size_t uid;
+		set<size_t> ins;
+		set<size_t> outs;
+		petri::iterator first;
+		petri::iterator last;
+		vector<petri::iterator> transitions;
+		//vector<size_t> pre_defs;
+		//vector<size_t> post_defs;
+		//UseDefChain usedef;
+	};
+
+	//TODO: size_t vs petri::iterator?
+	std::unordered_map<size_t, useDefChain> useDefChains;
+	std::unordered_map<size_t, size_t> transitionToBlock;
+	std::vector<controlFlowBlock> controlFlowGraph;
+
+	void setUseDef(size_t var_idx, size_t transition_idx, bool is_definition=false);
+	void computeUseDefChains();
+
+	void extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
+	void extractUseDefFromTransition(size_t transition_idx);
+	void computeControlFlowGraph();
 };
 
 }

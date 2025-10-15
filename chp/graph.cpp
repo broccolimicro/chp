@@ -521,7 +521,199 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 	}
 }
 
-void graph::decompose() {
+void graph::setUseDef(size_t chp_var_idx, size_t transition_idx, bool is_definition) {
+	string chp_var_name = this->netAt(chp_var_idx);
+
+	// New variable? Record its name
+	if (this->useDefChains.find(chp_var_idx) == this->useDefChains.end()) {
+		this->useDefChains[chp_var_idx].name = chp_var_name;
+	}
+
+	if (is_definition) {
+		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
+		//this->defs[chp_var_name].push_back(transition_idx);
+		cout << "DEF _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+
+	} else {
+		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
+		//this->uses[chp_var_name].push_back(transition_idx);
+		cout << "USE _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+	}
+}
+
+void graph::extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression &e, bool is_definition) {
+	if (is_definition && e.top.isVar() && e.size() == 0) {
+		this->setUseDef(e.top.index, transition_idx, true);
+
+	} else if (not e.isUndef()) { //if (e.isExpr()) {
+		for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+
+			// Iterate across all sub-expression leaves
+			//TODO: introduce some simpler "walkLeaves" helper method into Expression
+			const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+			for (const arithmetic::Operand &operand : operation.operands) {
+				if (operand.type == arithmetic::Operand::Type::VAR) {
+					this->setUseDef(operand.index, transition_idx, is_definition);
+				}
+			}
+		}
+	} // else if (not e.isUndef()) {}
+}
+
+void graph::extractUseDefFromTransition(size_t transition_idx) {
+	const chp::transition &tran = this->transitions[transition_idx];
+	extractUseDefFromExpression(transition_idx, tran.guard);
+
+	const arithmetic::Choice &action = tran.action;
+	for (const auto &term : action.terms) {
+		for (const auto &action : term.actions) {
+			extractUseDefFromExpression(transition_idx, action.lvalue, true);
+			//TODO: is_definition parameter could be more robust ":=" assignment operator matching
+			extractUseDefFromExpression(transition_idx, action.rvalue);
+		}
+	}
+}
+
+void graph::computeControlFlowGraph() {
+
+	// Find starting node & populate entry block
+	petri::iterator init_transition;
+	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+		init_transition = petri::iterator(transition::type, transition_idx);
+		if (this->is_valid(init_transition)) {
+			break;
+		}
+	}
+
+	if (init_transition.index == -1) {
+		cout << "DFG is empty" << endl;
+		return;
+	}
+
+	// Populate initial block
+	chp::graph::controlFlowBlock current_block(
+			0,
+			{},
+			{},
+			init_transition,
+			init_transition,
+			{init_transition});
+	this->controlFlowGraph.push_back(current_block);
+	this->transitionToBlock[0] = 0;
+
+	// Crawl transitions breadth-first to cluster into Control-Flow Graph blocks
+	petri::iterator current_it(init_transition);
+	std::set<petri::iterator> visited;
+	std::queue<petri::iterator> queue;
+	queue.push(current_it);
+
+	while (not queue.empty()) {
+		current_it = queue.front();
+		queue.pop();
+		visited.insert(current_it);
+
+		size_t current_block_uid = this->transitionToBlock[current_it.index];
+		current_block = this->controlFlowGraph[current_block_uid];
+
+		vector<petri::iterator> out_transitions;
+		for (petri::iterator out_place : this->next(current_it)) {
+			for (petri::iterator out_transition : this->next(out_place)) {
+				out_transitions.push_back(out_transition);
+			}
+		}
+
+		// Default sequential append
+		size_t out_transitions_count = out_transitions.size();
+		if (out_transitions_count == 1) {
+			petri::iterator next_transition_it = out_transitions[0];
+
+			// Edge-case: returning to init entry OR joining a pre-discovered merge
+			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
+			if (already_in_block) {
+				size_t block_uid = this->transitionToBlock[next_transition_it.index];
+				this->controlFlowGraph[block_uid].ins.insert(current_block.uid);
+				this->controlFlowGraph[current_block.uid].outs.insert(block_uid);
+				continue;
+			}
+
+			//TODO: don't forget CONDITIONAL merges!
+			// Edge-case: discovering a merge (not already in block)
+			size_t next_transition_in_count = this->prev(next_transition_it).size();
+			if (next_transition_in_count > 1) {
+
+				// Create new block
+				size_t new_block_uid = this->controlFlowGraph.size();
+				chp::graph::controlFlowBlock new_block(
+						new_block_uid,
+						{current_block.uid},
+						{},
+						next_transition_it,
+						next_transition_it,
+						{next_transition_it});
+				this->controlFlowGraph.push_back(new_block);
+				this->transitionToBlock[next_transition_it.index] = new_block_uid;
+				this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
+
+				queue.push(next_transition_it);
+				continue;
+			}
+
+			// Default-case: Append to current block
+			this->controlFlowGraph[current_block_uid].last = next_transition_it;
+			this->controlFlowGraph[current_block_uid].transitions.push_back(next_transition_it);
+			this->transitionToBlock[next_transition_it.index] = current_block.uid;
+			queue.push(next_transition_it);
+			continue;
+
+		//TODO: We assume ALWAYS non-terminating process (i.e. no dead-ends). Properly report malformed failures
+		} else if (out_transitions_count == 0) {
+			cerr << "ERROR: Terminating / dead-end Transition found. We assume ALWAYS non-terminating processes." << endl;
+			return;
+		}
+
+		// Wrap up the current block & initiate new ones
+		for (petri::iterator &next_transition_it : out_transitions) {
+			// Has this already been documented? If so, ensure our block connects to theirs
+			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
+			if (already_in_block) {
+				size_t block_uid = this->transitionToBlock[next_transition_it.index];
+				this->controlFlowGraph[block_uid].ins.insert(current_block.uid);
+				this->controlFlowGraph[current_block.uid].outs.insert(block_uid);
+				continue;
+			}
+
+			// Create new block
+			size_t new_block_uid = this->controlFlowGraph.size();
+			chp::graph::controlFlowBlock new_block(
+					new_block_uid,
+					{current_block.uid},
+					{},
+					next_transition_it,
+					next_transition_it,
+					{next_transition_it});
+			this->controlFlowGraph.push_back(new_block);
+			this->transitionToBlock[next_transition_it.index] = new_block_uid;
+			this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
+
+			if (!visited.contains(next_transition_it)) {
+				queue.push(next_transition_it);
+			}
+		}
+	}
+
+	this->controlFlowGraphReady = true;
+}
+
+void graph::computeUseDefChains() {
+	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+		petri::iterator t_it(transition::type, transition_idx);
+		if (not this->is_valid(t_it)) { continue; }
+
+		extractUseDefFromTransition(transition_idx);
+	}
+}
+
+void graph::decompose() {  //chp::graph &g) {}
 	// TODO Process Decomposition and Projection
 	//
 	// The goal of this project is to break up a large sequential process into
@@ -554,7 +746,7 @@ void graph::decompose() {
 	//   c. Mark all channels without those probes as slack elastic
 	//
 	// === Successful completion of project ===
-	// 
+	//
 	// Your time is yours, what do you want to tackle next?
 	// Some ideas:
 	// 1. Remove all channel actions for dataless slack elastic channels
@@ -564,6 +756,26 @@ void graph::decompose() {
 	// 1. Clean up any bugs
 	// 2. Prepare demo
 	// 3. Document as needed
+
+	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
+	cout << endl << "_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
+	cout << this->name << endl;
+
+	//string dot = chp::export_graph(*this, true, true).to_string();
+	//string dot_filename = (std::filesystem::current_path() / ("test_" + this->name)).string();
+	//ofstream dot_file(dot_filename);
+	//if (!dot_file) {
+	//	std::cerr << "ERROR: Failed to open file for dot export: "
+	//		<< dot_filename << std::endl;
+	//	//<< "ERROR: Try again from dir: <project_dir>/lib/flow" << std::endl;
+
+	//}  else {
+	//	dot_file << dot;
+	//}
+
+	this->computeUseDefChains();
+	this->computeControlFlowGraph();
+	cout << "decomposed." << endl;
 }
 
 void graph::expand() {
@@ -914,6 +1126,11 @@ void graph::flatten(bool debug) {
 
 	// Unzip all merge-places (multiple inputs, one output) to dominator
 	//TODO: fix multiple recursively, not just closest ancestor to dominator
+	// e.g., crawl EVERY input of dominator until it returns to itself or terminates,
+	// seeking a sequence with a conditional-merge-place ...to unzip forwards to dominator again
+	// ...so do an initial crawl to identify a vector of these points, then for each do the unzips
+	// (order might matter, so take note of distance or inter-relationships between these conditional merges
+
 	petri::iterator final_merge(dominator);
 	while (this->super::prev(final_merge).size() == 1) {
 			final_merge = this->super::prev(final_merge)[0];
