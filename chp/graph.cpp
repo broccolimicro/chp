@@ -10,6 +10,10 @@
 #include <common/mapping.h>
 #include <interpret_arithmetic/export.h>
 
+//TODO: delete after development
+#include <algorithm>
+#include <interpret_chp/export_dot.h>
+
 namespace chp
 {
 
@@ -521,208 +525,14 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 	}
 }
 
-void graph::setUseDef(size_t chp_var_idx, size_t transition_idx, bool is_definition) {
-	string chp_var_name = this->netAt(chp_var_idx);
-
-	// New variable? Record its name
-	if (this->useDefChains.find(chp_var_idx) == this->useDefChains.end()) {
-		this->useDefChains[chp_var_idx].name = chp_var_name;
-	}
-
-	if (is_definition) {
-		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
-		//this->defs[chp_var_name].push_back(transition_idx);
-		cout << "DEF _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
-
-	} else {
-		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
-		//this->uses[chp_var_name].push_back(transition_idx);
-		cout << "USE _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
-	}
-}
-
-void graph::extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression &e, bool is_definition) {
-	if (is_definition && e.top.isVar() && e.size() == 0) {
-		this->setUseDef(e.top.index, transition_idx, true);
-
-	} else if (not e.isUndef()) { //if (e.isExpr()) {
-		for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
-
-			// Iterate across all sub-expression leaves
-			//TODO: introduce some simpler "walkLeaves" helper method into Expression
-			const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
-			for (const arithmetic::Operand &operand : operation.operands) {
-				if (operand.type == arithmetic::Operand::Type::VAR) {
-					this->setUseDef(operand.index, transition_idx, is_definition);
-				}
-			}
-		}
-	} // else if (not e.isUndef()) {}
-}
-
-void graph::extractUseDefFromTransition(size_t transition_idx) {
-	const chp::transition &tran = this->transitions[transition_idx];
-	extractUseDefFromExpression(transition_idx, tran.guard);
-
-	const arithmetic::Choice &action = tran.action;
-	for (const auto &term : action.terms) {
-		for (const auto &action : term.actions) {
-			extractUseDefFromExpression(transition_idx, action.lvalue, true);
-			//TODO: is_definition parameter could be more robust ":=" assignment operator matching
-			extractUseDefFromExpression(transition_idx, action.rvalue);
-		}
-	}
-}
-
-void graph::computeControlFlowGraph() {
-
-	// Find starting node & populate entry block
-	petri::iterator init_transition;
-	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
-		init_transition = petri::iterator(transition::type, transition_idx);
-		if (this->is_valid(init_transition)) {
-			break;
-		}
-	}
-
-	if (init_transition.index == -1) {
-		cout << "DFG is empty" << endl;
-		return;
-	}
-
-	// Populate initial block
-	chp::graph::controlFlowBlock current_block(
-			0,
-			{},
-			{},
-			init_transition,
-			init_transition,
-			{init_transition});
-	this->controlFlowGraph.push_back(current_block);
-	this->transitionToBlock[0] = 0;
-
-	// Crawl transitions breadth-first to cluster into Control-Flow Graph blocks
-	petri::iterator current_it(init_transition);
-	std::set<petri::iterator> visited;
-	std::queue<petri::iterator> queue;
-	queue.push(current_it);
-
-	while (not queue.empty()) {
-		current_it = queue.front();
-		queue.pop();
-		visited.insert(current_it);
-
-		size_t current_block_uid = this->transitionToBlock[current_it.index];
-		current_block = this->controlFlowGraph[current_block_uid];
-
-		vector<petri::iterator> out_transitions;
-		for (petri::iterator out_place : this->next(current_it)) {
-			for (petri::iterator out_transition : this->next(out_place)) {
-				out_transitions.push_back(out_transition);
-			}
-		}
-
-		// Only leads to 1 transition: could it be in the same block?
-		size_t out_transitions_count = out_transitions.size();
-		if (out_transitions_count == 1) {
-			petri::iterator next_transition_it = out_transitions[0];
-
-			// Edge-case: returning to init entry OR joining a pre-discovered merge ahead
-			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
-			if (already_in_block) {
-				size_t block_uid = this->transitionToBlock[next_transition_it.index];
-				this->controlFlowGraph[block_uid].ins.insert(current_block.uid);
-				this->controlFlowGraph[current_block.uid].outs.insert(block_uid);
-				continue;
-			}
-
-			// Edge-case: discovering a new merge ahead
-			// There might be a merge at the next transition OR even the place on the way!
-			// Pure, self-contained cases where (ONLY 1 transition -> many local-only places -> 1 transition) aren't a concern
-			set<petri::iterator> neighbor_transitions_merging_ahead;
-			for (petri::iterator place_to_next_transition : this->prev(next_transition_it)) {
-				for (petri::iterator neighbor_transition : this->prev(place_to_next_transition)) {
-					neighbor_transitions_merging_ahead.insert(neighbor_transition);
-				}
-			}
-
-			size_t next_transition_in_count = neighbor_transitions_merging_ahead.size();
-			if (next_transition_in_count > 1) {
-
-				// Create new block
-				size_t new_block_uid = this->controlFlowGraph.size();
-				chp::graph::controlFlowBlock new_block(
-						new_block_uid,
-						{current_block.uid},
-						{},
-						next_transition_it,
-						next_transition_it,
-						{next_transition_it});
-				this->controlFlowGraph.push_back(new_block);
-				this->transitionToBlock[next_transition_it.index] = new_block_uid;
-				this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
-
-				queue.push(next_transition_it);
-				continue;
-			}
-
-			// Default-case (sequence): Append to current block
-			this->controlFlowGraph[current_block_uid].last = next_transition_it;
-			this->controlFlowGraph[current_block_uid].transitions.push_back(next_transition_it);
-			this->transitionToBlock[next_transition_it.index] = current_block.uid;
-			queue.push(next_transition_it);
-			continue;
-
-		// We assume ALWAYS non-terminating process (i.e. no dead-ends)
-		} else if (out_transitions_count == 0) {
-			cerr << "ERROR: Terminating / dead-end Transition found. We assume ALWAYS non-terminating processes." << endl;
-			return;
-		}
-
-		// Wrap up the current block & initiate new ones
-		for (petri::iterator &next_transition_it : out_transitions) {
-
-			// Has this already been documented? If so, ensure our block connects to theirs
-			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
-			if (already_in_block) {
-				size_t block_uid = this->transitionToBlock[next_transition_it.index];
-				this->controlFlowGraph[block_uid].ins.insert(current_block.uid);
-				this->controlFlowGraph[current_block.uid].outs.insert(block_uid);
-				continue;
-			}
-
-			// Create new block
-			size_t new_block_uid = this->controlFlowGraph.size();
-			chp::graph::controlFlowBlock new_block(
-					new_block_uid,
-					{current_block.uid},
-					{},
-					next_transition_it,
-					next_transition_it,
-					{next_transition_it});
-			this->controlFlowGraph.push_back(new_block);
-			this->transitionToBlock[next_transition_it.index] = new_block_uid;
-			this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
-
-			if (!visited.contains(next_transition_it)) {
-				queue.push(next_transition_it);
-			}
-		}
-	}
-
-	this->controlFlowGraphReady = true;
-}
-
-void graph::computeUseDefChains() {
-	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
-		petri::iterator t_it(transition::type, transition_idx);
-		if (not this->is_valid(t_it)) { continue; }
-
-		extractUseDefFromTransition(transition_idx);
-	}
-}
-
 void graph::decompose() {  //chp::graph &g) {}
+	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
+	cout << endl << "_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
+	cout << ">>> " << this->name << endl;
+
+	this->convertToDSA();
+	cout << "decomposed." << endl;
+
 	// TODO Process Decomposition and Projection
 	//
 	// The goal of this project is to break up a large sequential process into
@@ -766,10 +576,6 @@ void graph::decompose() {  //chp::graph &g) {}
 	// 2. Prepare demo
 	// 3. Document as needed
 
-	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
-	cout << endl << "_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
-	cout << this->name << endl;
-
 	//string dot = chp::export_graph(*this, true, true).to_string();
 	//string dot_filename = (std::filesystem::current_path() / ("test_" + this->name)).string();
 	//ofstream dot_file(dot_filename);
@@ -781,10 +587,6 @@ void graph::decompose() {  //chp::graph &g) {}
 	//}  else {
 	//	dot_file << dot;
 	//}
-
-	this->computeUseDefChains();
-	this->computeControlFlowGraph();
-	cout << "decomposed." << endl;
 }
 
 void graph::expand() {
@@ -1187,7 +989,6 @@ void graph::flatten(bool debug) {
 	if (debug) { cout << "¡Yµ wWµøT!" << endl << endl; }
 }
 
-
 bool graph::isFlat() const {
 	//TODO: cache result for rapid look-up in chp::graph
 
@@ -1215,7 +1016,6 @@ bool graph::isFlat() const {
 	return true;
 }
 
-
 arithmetic::Expression graph::exclusion(int index) const {
 	arithmetic::Expression result;
 	vector<int> p = prev(transition::type, index);
@@ -1231,6 +1031,366 @@ arithmetic::Expression graph::exclusion(int index) const {
 		}
 	}
 	return result;
+}
+
+void graph::computeControlFlowGraph() {
+	this->controlFlowGraphReady = false;
+
+	// Find starting node & populate entry block
+	petri::iterator init_transition;
+	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+		init_transition = petri::iterator(transition::type, transition_idx);
+		if (this->is_valid(init_transition)) {
+			break;
+		}
+	}
+
+	if (init_transition.index == -1) {
+		cout << "CFG is empty" << endl;
+		this->controlFlowGraphReady = true;
+		return;
+	}
+
+	// Populate initial block
+	chp::graph::controlFlowBlock current_block(
+			0,
+			{},
+			{},
+			init_transition,
+			init_transition,
+			{});
+	this->controlFlowGraph.push_back(current_block);
+
+	// Crawl transitions breadth-first to cluster into Control-Flow Graph blocks
+	//   with path-tracking to uncover most-relevant "Reaching Definitions"
+	petri::iterator current_it;
+	vector<petri::iterator> current_path;  // Full path to current node, including current node
+	std::queue<vector<petri::iterator>> queue;
+	std::set<petri::iterator> visited;
+	queue.push({init_transition});
+
+	while (not queue.empty()) {
+		vector<petri::iterator> current_path = queue.front();
+		queue.pop();
+		//if (not current_path.empty()) {
+		//	current_path = vector<petri::iterator>(current_path.begin(), current_path.end() - 1);
+		//}
+
+		current_it = current_path.back();
+		visited.insert(current_it);
+
+		size_t current_block_uid = this->transitionToBlock[current_it.index];
+		chp::graph::controlFlowBlock current_block = this->controlFlowGraph[current_block_uid];
+
+		// Crawl to transitions/statements up next
+		vector<petri::iterator> out_transitions;
+		for (petri::iterator out_place : this->next(current_it)) {
+			for (petri::iterator out_transition : this->next(out_place)) {
+				out_transitions.push_back(out_transition);
+			}
+		}
+
+		// Only leads to 1 transition: could it be in the same block?
+		size_t out_transitions_count = out_transitions.size();
+		if (out_transitions_count == 1) {
+			petri::iterator next_transition_it = out_transitions[0];
+
+			// Edge-case: returning to init entry OR joining a pre-discovered merge ahead
+			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
+			if (already_in_block) {
+				size_t next_block_uid = this->transitionToBlock[next_transition_it.index];
+				this->controlFlowGraph[next_block_uid].ins.insert(current_block.uid);
+				this->controlFlowGraph[current_block.uid].outs.insert(next_block_uid);
+				continue;
+			}
+
+			// Edge-case: discovering a new merge ahead
+			// There might be a merge at the next transition OR even the place on the way!
+			// Pure, self-contained cases where (ONLY 1 transition -> many local-only places -> 1 transition) aren't a concern
+			set<petri::iterator> neighbor_transitions_merging_ahead;
+			for (petri::iterator place_to_next_transition : this->prev(next_transition_it)) {
+				for (petri::iterator neighbor_transition : this->prev(place_to_next_transition)) {
+					neighbor_transitions_merging_ahead.insert(neighbor_transition);
+				}
+			}
+
+			size_t next_transition_in_count = neighbor_transitions_merging_ahead.size();
+			if (next_transition_in_count > 1) {
+
+				// Create new block
+				size_t new_block_uid = this->controlFlowGraph.size();
+				chp::graph::controlFlowBlock new_block(
+						new_block_uid,
+						{current_block.uid},
+						{},
+						next_transition_it,
+						next_transition_it,
+						{next_transition_it});
+				this->controlFlowGraph.push_back(new_block);
+				this->transitionToBlock[next_transition_it.index] = new_block_uid;
+				this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
+
+				auto [var_assigned, prevDefinitions] = this->getPreviousDefinitions(current_it, current_path);
+				if (var_assigned != -1) { 
+					this->controlFlowGraph[current_block.uid].gens[current_it.index] = var_assigned;
+
+					if (not prevDefinitions.empty()) {
+						size_t transitionToKill = prevDefinitions.back();
+						this->controlFlowGraph[current_block.uid].kills[current_it.index] = transitionToKill;
+					}
+				}
+
+				current_path.push_back(next_transition_it);
+				queue.push(current_path);
+				continue;
+			}
+
+			// Default-case (sequence): Append to current block
+			this->controlFlowGraph[current_block_uid].last = next_transition_it;
+			this->controlFlowGraph[current_block_uid].transitions.push_back(next_transition_it);
+			this->transitionToBlock[next_transition_it.index] = current_block.uid;
+
+			auto [var_assigned, prevDefinitions] = this->getPreviousDefinitions(current_it, current_path);
+			if (var_assigned != -1) { 
+				this->controlFlowGraph[current_block.uid].gens[current_it.index] = var_assigned;
+
+				if (not prevDefinitions.empty()) {
+					size_t transitionToKill = prevDefinitions.back();
+					this->controlFlowGraph[current_block.uid].kills[current_it.index] = transitionToKill;
+				}
+			}
+
+			current_path.push_back(next_transition_it);
+			queue.push(current_path);
+			continue;
+
+		// We assume ALWAYS non-terminating process (i.e. no dead-ends)
+		} else if (out_transitions_count == 0) {
+			cerr << "ERROR: Terminating / dead-end Transition found. We assume ALWAYS non-terminating processes." << endl;
+			return;
+		}
+
+		// Wrap up the current block & initiate new ones
+		for (petri::iterator &next_transition_it : out_transitions) {
+
+			// Has this already been documented? If so, ensure our block connects to theirs
+			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
+			if (already_in_block) {
+				size_t next_block_uid = this->transitionToBlock[next_transition_it.index];
+				this->controlFlowGraph[next_block_uid].ins.insert(current_block.uid);
+				this->controlFlowGraph[current_block.uid].outs.insert(next_block_uid);
+				continue;
+			}
+
+			// Create new block
+			size_t new_block_uid = this->controlFlowGraph.size();
+			chp::graph::controlFlowBlock new_block(
+					new_block_uid,
+					{current_block.uid},
+					{},
+					next_transition_it,
+					next_transition_it,
+					{next_transition_it});
+			this->controlFlowGraph.push_back(new_block);
+			this->transitionToBlock[next_transition_it.index] = new_block_uid;
+			this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
+
+			auto [var_assigned, prevDefinitions] = this->getPreviousDefinitions(current_it, current_path);
+			if (var_assigned != -1) { 
+				this->controlFlowGraph[current_block.uid].gens[current_it.index] = var_assigned;
+
+				if (not prevDefinitions.empty()) {
+					size_t transitionToKill = prevDefinitions.back();
+					this->controlFlowGraph[current_block.uid].kills[current_it.index] = transitionToKill;
+				}
+			}
+
+			if (!visited.contains(next_transition_it)) {
+				current_path.push_back(next_transition_it);
+				queue.push(current_path);
+			}
+		}
+	}
+
+	this->controlFlowGraphReady = true;
+}
+
+//void graph::setUseDef(size_t chp_var_idx, size_t transition_idx, bool is_definition) {
+//	string chp_var_name = this->netAt(chp_var_idx);
+//
+//	// New variable? Record its name
+//	if (this->useDefChains.find(chp_var_idx) == this->useDefChains.end()) {
+//		this->useDefChains[chp_var_idx].name = chp_var_name;
+//	}
+//
+//	if (is_definition) {
+//		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
+//		//this->defs[chp_var_name].push_back(transition_idx);
+//		cout << "DEF _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+//
+//	} else {
+//		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
+//		//this->uses[chp_var_name].push_back(transition_idx);
+//		cout << "USE _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+//	}
+//}
+//
+//void graph::extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression &e, bool is_definition) {
+//	if (is_definition && e.top.isVar() && e.size() == 0) {
+//		this->setUseDef(e.top.index, transition_idx, true);
+//
+//	} else if (not e.isUndef()) { //if (e.isExpr()) {
+//		for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+//
+//			// Iterate across all sub-expression leaves
+//			//TODO: introduce some simpler "walkLeaves"-esque helper method into Expression?
+//			const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+//			for (const arithmetic::Operand &operand : operation.operands) {
+//				if (operand.type == arithmetic::Operand::Type::VAR) {
+//					this->setUseDef(operand.index, transition_idx, is_definition);
+//				}
+//			}
+//		}
+//	} // else if (not e.isUndef()) {}
+//}
+//
+//void graph::extractUseDefFromTransition(size_t transition_idx) {
+//	const chp::transition &tran = this->transitions[transition_idx];
+//	extractUseDefFromExpression(transition_idx, tran.guard);
+//
+//	const arithmetic::Choice &action = tran.action;
+//	for (const auto &term : action.terms) {
+//		for (const auto &action : term.actions) {
+//			extractUseDefFromExpression(transition_idx, action.lvalue, true);
+//
+//			//TODO: is_definition parameter could be more robust ":=" assignment operand matching
+//			extractUseDefFromExpression(transition_idx, action.rvalue);
+//		}
+//	}
+//}
+//
+//void graph::computeUseDefChains() {
+//	this->useDefChainsReady = false;
+//
+//	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+//		petri::iterator t_it(transition::type, transition_idx);
+//		if (not this->is_valid(t_it)) { continue; }
+//
+//		extractUseDefFromTransition(transition_idx);
+//	}
+//
+//	this->useDefChainsReady = true;
+//}
+
+pair<int, vector<size_t>> graph::getPreviousDefinitions(petri::iterator transition_it, const vector<petri::iterator> &prev_transitions) {
+	//TODO: rename prev_transitions param, now that I include current def
+	//TODO: return all redefinitions of the same var so it can be enumerated (the LAST one in this vector is the reaching def!)
+	//TODO: perf, cache this inside each transition, so there's a running set? Where should the analysis data be stored?
+
+	// If there's no assignment, skip
+	size_t var_assigned;
+
+	//TODO: isAssignment() expression helper in chp::transition?
+	bool is_assignment = false;
+	const chp::transition &transition = this->transitions[transition_it.index];
+	const arithmetic::Choice &action = transition.action;
+	for (const arithmetic::Parallel &term : action.terms) {
+		for (const arithmetic::Action &action : term.actions) {
+			if (not action.lvalue.isUndef()) {
+				is_assignment = true;
+				var_assigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+			}
+			break;
+		}
+	}
+
+	if (not is_assignment) {
+		cout << "===> " << transition_it.index << ": N/A" << endl;
+		return pair<int, vector<size_t>>(-1, {});
+	}
+
+	// Filter down previous transitions to only assignments
+	vector<size_t> prev_defs;
+	for (auto prev_transition_it = prev_transitions.begin(); prev_transition_it != prev_transitions.end() - 1; prev_transition_it++) {
+		const chp::transition &prev_transition = this->transitions[prev_transition_it->index];
+
+		const arithmetic::Choice &prev_action = prev_transition.action;
+		for (const arithmetic::Parallel &term : prev_action.terms) {
+			for (const arithmetic::Action &action : term.actions) {
+				if (action.lvalue.isUndef()) { continue; }
+
+				// Filter down previous assignments to only assignments of the same var
+				size_t prev_var_assigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+				if (var_assigned == prev_var_assigned) {
+					prev_defs.push_back(prev_transition_it->index);
+				}
+			}
+		}
+	}
+
+	// The last transition in the return vector just got redefined, so "kill" it in the containing block
+	cout << "===> " << transition_it.index << ": ";
+	std::copy(prev_defs.begin(), prev_defs.end(), ostream_iterator<size_t>(std::cout, ", "));
+	cout << endl;
+	return pair<int, vector<size_t>>(var_assigned, prev_defs);
+}
+
+void graph::convertToDSA() {
+	this->computeControlFlowGraph();
+	//this->computeUseDefChains();
+
+	// Populate pre- & post- reaching definitions
+	// Use [forward] iterative "Worklist" algorithm for data flow (remarkably stable, block-order-invariant)
+	stack<size_t> worklist;
+	for (vector<controlFlowBlock>::reverse_iterator blockIt = this->controlFlowGraph.rbegin(); blockIt != this->controlFlowGraph.rend(); ++blockIt) {
+		worklist.push(blockIt->uid);  // Populate stack with first element at the top
+	}
+
+	while (not worklist.empty()) {
+		size_t blockId = worklist.top();
+		worklist.pop();
+		controlFlowBlock &block = this->controlFlowGraph[blockId];
+		bool blockOutsModified = false;
+
+		// Populate pre- definitions based on in-blocks
+		//TODO: block.preDefs merge/union(in_block.postDef for in_block in block.ins)
+		//in_block.postDef
+
+		// Enumerate block-internal vars in DSA form
+		unordered_map <size_t, vector<vector<size_t>>> blockVarIndices; // var -> transition_idxs vector [def] of vectors[uses]
+		for (petri::iterator transitionIt : block.transitions) {
+			size_t transitionIdx = transitionIt.index;
+
+			// Found a first-time definition
+			if (block.gens.contains(transitionIdx)) {
+				//const size_t &var_defined = block.defs[transitionIdx];
+
+				//TODO: increment this vars (& update local reaches of it?)
+				//TODO: decompose this var's use-def chain? Nope, not anymore with this iterative approach
+
+			// Found a redefinition
+			} else if (block.kills.contains(transitionIdx)) {
+				cout << " ";
+				//TODO: document all indices/usedefs as redfined in DSA form or only rely on pre- & post-defs in future analyses?
+				//TODO: Don't forget to remap the uses beyond the defs
+			}
+		}
+
+		// Populate post-definitions based on local transformations, if any occurred
+		//TODO: block.postPef = transfer(blockId, block.preDefs) // b.gen u (b.predef - b.kill)
+		set<size_t> postDefsBefore = block.postDefs;
+		if (block.postDefs != postDefsBefore) {
+			blockOutsModified = true;
+		}
+
+		if (blockOutsModified) {
+			for (const size_t &out : block.outs) {
+				worklist.push(out);
+			}
+		}
+	}
+
+	cout << "DSA'd" << endl;
 }
 
 }

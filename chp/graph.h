@@ -115,6 +115,24 @@ struct variable {
 	vector<int> remote;
 };
 
+struct VariableUse {
+    petri::iterator transition;  // The transition where the use occurs
+    size_t expr_pos;            // Position in the expression tree
+    bool is_write;              // True if this is a definition
+};
+
+struct VariableDefUse {
+    vector<VariableUse> uses;    // All uses of this variable
+    vector<VariableUse> defs;    // All definitions of this variable
+};
+
+struct ReachingDef {
+    petri::iterator def_site;    // Where the definition occurs
+    petri::iterator use_site;    // Where the definition is used
+    string var_name;             // Which variable
+    bool is_killed;              // If this definition is killed before the use
+};
+
 struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
 {
 	typedef petri::graph<chp::place, chp::transition, petri::token, chp::state> super;
@@ -127,6 +145,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	vector<variable> vars;
 
 	bool controlFlowGraphReady = false;
+	bool useDefChainsReady = false;
 
 	int netIndex(string name, bool define=false);
 	int netIndex(string name) const;
@@ -155,13 +174,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	bool isFlat() const;  //TODO: cache in property for quick look-up
 	arithmetic::Expression exclusion(int index) const;
 
-	struct useDefChain {
-		string name;
-		vector<size_t> defs;
-		vector<size_t> uses;
-		//TODO: reaching defs / is_killed
-	};
-
+	//TODO: petri::iterator -> size_t?
 	struct controlFlowBlock {
 		size_t uid;
 		set<size_t> ins;
@@ -169,22 +182,32 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 		petri::iterator first;
 		petri::iterator last;
 		vector<petri::iterator> transitions;
-		//vector<size_t> pre_defs;
-		//vector<size_t> post_defs;
-		//UseDefChain usedef;
+		unordered_map<size_t, size_t> gens;  // transition_idx of def -> var defined
+		unordered_map<size_t, size_t> kills;  // transition_idx of redef -> var redefined
+		set<size_t> preDefs;
+		set<size_t> postDefs;
 	};
 
-	//TODO: size_t vs petri::iterator?
-	std::unordered_map<size_t, useDefChain> useDefChains;
-	std::unordered_map<size_t, size_t> transitionToBlock;
-	std::vector<controlFlowBlock> controlFlowGraph;
-
-	void setUseDef(size_t var_idx, size_t transition_idx, bool is_definition=false);
-	void computeUseDefChains();
-
-	void extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
-	void extractUseDefFromTransition(size_t transition_idx);
+	unordered_map<size_t, size_t> transitionToBlock;
+	vector<controlFlowBlock> controlFlowGraph;
+	//size_t getReachingDef(size_t var_idx, size_t transition_idx);
+	pair<int, vector<size_t>> getPreviousDefinitions(petri::iterator it, const vector<petri::iterator> &v);
 	void computeControlFlowGraph();
+
+	//struct useDefChain {
+	//	string name;
+	//	size_t DSA_index = 0;
+	//	vector<size_t> defs;
+	//	vector<size_t> uses;
+	//};
+
+	//unordered_map<size_t, useDefChain> useDefChains;
+	//void setUseDef(size_t var_idx, size_t transition_idx, bool is_definition=false);
+	//void extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
+	//void extractUseDefFromTransition(size_t transition_idx);
+	//void computeUseDefChains();
+
+	void convertToDSA();
 };
 
 }
