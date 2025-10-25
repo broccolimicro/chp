@@ -1106,7 +1106,7 @@ void graph::computeControlFlowGraph() {
 
 			// Edge-case: discovering a new merge ahead
 			// There might be a merge at the next transition OR even the place on the way!
-			// Pure, self-contained cases where (ONLY 1 transition -> many local-only places -> 1 transition) aren't a concern
+			// Pure, self-contained cases where (ONLY 1 transition -> many local-only places -> 1 transition) work appropriately
 			set<petri::iterator> neighbor_transitions_merging_ahead;
 			for (petri::iterator place_to_next_transition : this->prev(next_transition_it)) {
 				for (petri::iterator neighbor_transition : this->prev(place_to_next_transition)) {
@@ -1335,6 +1335,72 @@ pair<int, vector<size_t>> graph::getPreviousDefinitions(petri::iterator transiti
 	return pair<int, vector<size_t>>(var_assigned, prev_defs);
 }
 
+unordered_map<size_t, size_t> graph::mergeDefinitionsBeforeBlock(size_t blockId) {
+	controlFlowBlock &block = this->controlFlowGraph[blockId];
+	unordered_map<size_t, size_t> liveDefinitions;
+
+	//unordered_map<size_t, unordered_map<size_t, size_t>> DSAIndexByVar;
+	//unordered_map<size_t, size_t> from_block_idx, dsa_index;
+	//unordered_map<size_t, size_t> var_idx, from_block_idx, dsa_index;
+	//unordered_map<pair<size_t, size_t>, size_t> dsaIndicesByBlock;  // [var_idx, from_block_idx] => var_count (a.k.a. DSA Index)
+	unordered_map<size_t, unordered_map<size_t, size_t>> dsaIndexPerBlockPerVar;  // var_idx -> { from_block_idx -> var_count (a.k.a. DSA Index)}
+
+// For each variable, aggregate DSA indices by input block source
+for (size_t inBlockIdx : block.ins) {
+	const controlFlowBlock &in_block = this->controlFlowGraph[inBlockIdx];
+
+	for (pair<size_t, size_t> inDef : in_block.postDefs) {
+		dsaIndexPerBlockPerVar[inDef.first][inBlockIdx] = inDef.second;
+
+		//if (liveDefinitions.contains[inDef.first]) {
+		//	size_t prev_dsa_count = liveDefinitions[inDef.first];
+		//
+		//	// Is this post-selection's in-block behind its neighbor?
+		//	if (prev_dsa_count > inDef.second) {
+		//		//TODO: inject appropiate copy assignment in other selection
+
+		//	} else if (prev_dsa_count < inDef.second) {
+		//	//TODO: then merge if needed: inject copy assignment to align post-selections
+		//	}
+
+		//} else {
+		//	liveDefinitions[inDef.first] = inDef.second;
+		//}
+	}
+}
+
+// Identify any post-selection variables that need additional copy assignments
+//TODO: block.preDefs merge/union(in_block.postDef for in_block in block.ins)
+for (const auto &[var_idx, dsaIndexPerBlock] : dsaIndexPerBlockPerVar) {
+	//dsaIndexPerBlock[]
+	auto maxIt = std::max_element(dsaIndexPerBlock.begin(), dsaIndexPerBlock.end());
+	size_t deepestBlock = maxIt->first;
+	size_t maxIndex = maxIt->second;
+	cout << "*** " << this->vars[var_idx].name << "[" << deepestBlock << "]: " << maxIndex << endl;
+
+	//TODO: Do all input blocks end with the same index or are there redefinition-count mismatches?
+	// Are any input blocks there any redefinition-count mismatchs from any inputs?
+	//for (auto [block_idx, dsa_count] : dsaIndexPerBlock) {}
+	liveDefinitions[var_idx] = maxIndex;
+}
+
+return liveDefinitions;
+}
+
+size_t graph::getEnumeratedVar(size_t varIdx, size_t num) {
+	string enumeratedName = this->vars[varIdx].name + std::to_string(num);
+
+	int enumeratedVarIdx = this->netIndex(enumeratedName);
+	if (enumeratedVarIdx == -1) {
+		enumeratedVarIdx = this->vars.size();
+
+		chp::variable enumeratedVar(enumeratedName);
+		this->vars.push_back(enumeratedVar);
+	}
+
+	return enumeratedVarIdx;
+}
+
 void graph::convertToDSA() {
 	this->computeControlFlowGraph();
 	//this->computeUseDefChains();
@@ -1346,44 +1412,81 @@ void graph::convertToDSA() {
 		worklist.push(blockIt->uid);  // Populate stack with first element at the top
 	}
 
+	size_t workCount = 0;
 	while (not worklist.empty()) {
+		workCount++;
+		cout << "-=-=-=-=-=-=-=-=-=-=-=-=- <><> " << workCount << endl;
 		size_t blockId = worklist.top();
 		worklist.pop();
 		controlFlowBlock &block = this->controlFlowGraph[blockId];
-		bool blockOutsModified = false;
 
 		// Populate pre- definitions based on in-blocks
-		//TODO: block.preDefs merge/union(in_block.postDef for in_block in block.ins)
-		//in_block.postDef
+		unordered_map<size_t, size_t> liveDefinitions = this->mergeDefinitionsBeforeBlock(blockId);
+		block.preDefs = liveDefinitions;
 
 		// Enumerate block-internal vars in DSA form
-		unordered_map <size_t, vector<vector<size_t>>> blockVarIndices; // var -> transition_idxs vector [def] of vectors[uses]
+		unordered_map<size_t, vector<vector<size_t>>> blockVarIndices; // var -> transition_idxs vector [def] of vectors[uses]
+
 		for (petri::iterator transitionIt : block.transitions) {
 			size_t transitionIdx = transitionIt.index;
 
-			// Found a first-time definition
-			if (block.gens.contains(transitionIdx)) {
-				//const size_t &var_defined = block.defs[transitionIdx];
+			// Replace "killed" defintion with new redefinition
+			bool isRedefinition = false;
+			if (block.kills.contains(transitionIdx)) {
+				isRedefinition = true;
+				size_t redefinedVar = block.gens[transitionIdx];
+				//size_t prev_defining_transition = block.kills[transitionIdx];
+				liveDefinitions[redefinedVar]++;
 
-				//TODO: increment this vars (& update local reaches of it?)
-				//TODO: decompose this var's use-def chain? Nope, not anymore with this iterative approach
-
-			// Found a redefinition
-			} else if (block.kills.contains(transitionIdx)) {
-				cout << " ";
-				//TODO: document all indices/usedefs as redfined in DSA form or only rely on pre- & post-defs in future analyses?
-				//TODO: Don't forget to remap the uses beyond the defs
+				// Append first-time definition
+			} else if (block.gens.contains(transitionIdx)) {
+				size_t definedVar = block.gens[transitionIdx];
+				liveDefinitions[definedVar] = 0;
 			}
+
+			if (not liveDefinitions.empty()) {
+				//std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){ cout << this->vars[d.first].name << "[" << d.second << "], "; }); cout << endl;
+
+				// Enumerate current expression w/ DSA indices
+				Mapping<size_t> postDefIndices;
+				for (auto [varIdx, dsaIdx] : liveDefinitions) {
+					size_t dsaVarIdx = this->getEnumeratedVar(varIdx, dsaIdx);
+					postDefIndices.set(varIdx, dsaVarIdx);
+				}
+
+				Mapping<size_t> preDefIndices(postDefIndices);
+				if (isRedefinition) {
+					size_t redefinedVar = block.gens[transitionIdx];
+					size_t enumeratedVarAfter = liveDefinitions[redefinedVar];
+					size_t enumeratedVarBefore = this->getEnumeratedVar(redefinedVar, enumeratedVarAfter - 1);
+					preDefIndices.set(redefinedVar, enumeratedVarBefore);
+				}
+
+				chp::transition &transition = this->transitions[transitionIdx];
+				transition.guard.applyVars(preDefIndices);
+
+				arithmetic::Choice &choice = transition.action;
+				for (arithmetic::Parallel &term : choice.terms) {
+					for (arithmetic::Action &action : term.actions) {
+						action.lvalue.applyVars(postDefIndices);
+						action.rvalue.applyVars(preDefIndices);
+					}
+				}
+
+			} else {
+				cout << "umpty-dumpty" << endl;
+			}
+			//cout << "L>> " << transitionIt.lvalue << endl;
+			//cout << "R>> " << transitionIt.rvalue << endl;
 		}
 
 		// Populate post-definitions based on local transformations, if any occurred
 		//TODO: block.postPef = transfer(blockId, block.preDefs) // b.gen u (b.predef - b.kill)
-		set<size_t> postDefsBefore = block.postDefs;
-		if (block.postDefs != postDefsBefore) {
-			blockOutsModified = true;
-		}
+		if (liveDefinitions != block.postDefs) {
+			std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){ cout << this->vars[d.first].name << "[" << d.second << "], "; });
+			cout << endl;
+			block.postDefs = liveDefinitions;
 
-		if (blockOutsModified) {
 			for (const size_t &out : block.outs) {
 				worklist.push(out);
 			}

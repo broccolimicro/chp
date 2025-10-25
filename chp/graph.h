@@ -115,24 +115,6 @@ struct variable {
 	vector<int> remote;
 };
 
-struct VariableUse {
-    petri::iterator transition;  // The transition where the use occurs
-    size_t expr_pos;            // Position in the expression tree
-    bool is_write;              // True if this is a definition
-};
-
-struct VariableDefUse {
-    vector<VariableUse> uses;    // All uses of this variable
-    vector<VariableUse> defs;    // All definitions of this variable
-};
-
-struct ReachingDef {
-    petri::iterator def_site;    // Where the definition occurs
-    petri::iterator use_site;    // Where the definition is used
-    string var_name;             // Which variable
-    bool is_killed;              // If this definition is killed before the use
-};
-
 struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
 {
 	typedef petri::graph<chp::place, chp::transition, petri::token, chp::state> super;
@@ -183,15 +165,18 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 		petri::iterator last;
 		vector<petri::iterator> transitions;
 		unordered_map<size_t, size_t> gens;  // transition_idx of def -> var defined
-		unordered_map<size_t, size_t> kills;  // transition_idx of redef -> var redefined
-		set<size_t> preDefs;
-		set<size_t> postDefs;
+		unordered_map<size_t, size_t> kills;  // transition_idx of redef -> prev transition_idx def
+		unordered_map<size_t, size_t> preDefs;  // var_idx -> dsa_idx
+		unordered_map<size_t, size_t> postDefs;  // var_idx -> dsa_idx
 	};
 
 	unordered_map<size_t, size_t> transitionToBlock;
 	vector<controlFlowBlock> controlFlowGraph;
+
 	//size_t getReachingDef(size_t var_idx, size_t transition_idx);
 	pair<int, vector<size_t>> getPreviousDefinitions(petri::iterator it, const vector<petri::iterator> &v);
+	size_t getEnumeratedVar(size_t varIdx, size_t num);
+	unordered_map<size_t, size_t> mergeDefinitionsBeforeBlock(size_t blockId);
 	void computeControlFlowGraph();
 
 	//struct useDefChain {
