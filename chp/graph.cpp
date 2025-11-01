@@ -1112,6 +1112,7 @@ void graph::computeControlFlowGraph() {
 			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
 			if (already_in_block) {
 				size_t next_block_uid = this->transitionToBlock[next_transition_it.index];
+				if (next_block_uid == 0) { continue; }  //TODO: remove hack after testing. This cut unrolls the unconiditional loopback from program end-to-beginning for repetition-intolerant DSA enumeration. Once nested repetitions are supported, this can go.
 				this->controlFlowGraph[next_block_uid].ins.insert(current_block.uid);
 				this->controlFlowGraph[current_block.uid].outs.insert(next_block_uid);
 				continue;
