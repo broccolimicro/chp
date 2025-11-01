@@ -1326,48 +1326,33 @@ unordered_map<size_t, size_t> graph::mergeDefinitionsBeforeBlock(size_t blockId)
 	//unordered_map<size_t, size_t> from_block_idx, dsa_index;
 	//unordered_map<size_t, size_t> var_idx, from_block_idx, dsa_index;
 	//unordered_map<pair<size_t, size_t>, size_t> dsaIndicesByBlock;  // [var_idx, from_block_idx] => var_count (a.k.a. DSA Index)
-	unordered_map<size_t, unordered_map<size_t, size_t>> dsaIndexPerBlockPerVar;  // var_idx -> { from_block_idx -> var_count (a.k.a. DSA Index)}
+	unordered_map<size_t, unordered_map<size_t, size_t>> dsaIndexPerBlockPerVar;  // var_idx -> [ from_block_idx -> var_count (a.k.a. DSA Index) ]
 
-// For each variable, aggregate DSA indices by input block source
-for (size_t inBlockIdx : block.ins) {
-	const controlFlowBlock &in_block = this->controlFlowGraph[inBlockIdx];
+	// For each variable, aggregate DSA indices by input block source
+	for (size_t inBlockIdx : block.ins) {
+		const controlFlowBlock &in_block = this->controlFlowGraph[inBlockIdx];
 
-	for (pair<size_t, size_t> inDef : in_block.postDefs) {
-		dsaIndexPerBlockPerVar[inDef.first][inBlockIdx] = inDef.second;
-
-		//if (liveDefinitions.contains[inDef.first]) {
-		//	size_t prev_dsa_count = liveDefinitions[inDef.first];
-		//
-		//	// Is this post-selection's in-block behind its neighbor?
-		//	if (prev_dsa_count > inDef.second) {
-		//		//TODO: inject appropiate copy assignment in other selection
-
-		//	} else if (prev_dsa_count < inDef.second) {
-		//	//TODO: then merge if needed: inject copy assignment to align post-selections
-		//	}
-
-		//} else {
-		//	liveDefinitions[inDef.first] = inDef.second;
-		//}
+		for (pair<size_t, size_t> inDef : in_block.postDefs) {
+			dsaIndexPerBlockPerVar[inDef.first][inBlockIdx] = inDef.second;
+		}
 	}
-}
 
-// Identify any post-selection variables that need additional copy assignments
-//TODO: block.preDefs merge/union(in_block.postDef for in_block in block.ins)
-for (const auto &[var_idx, dsaIndexPerBlock] : dsaIndexPerBlockPerVar) {
-	//dsaIndexPerBlock[]
-	auto maxIt = std::max_element(dsaIndexPerBlock.begin(), dsaIndexPerBlock.end());
-	size_t deepestBlock = maxIt->first;
-	size_t maxIndex = maxIt->second;
-	cout << "*** " << this->vars[var_idx].name << "[" << deepestBlock << "]: " << maxIndex << endl;
+	// Identify any post-selection variables that need additional copy assignments
+	//TODO: block.preDefs merge/union(in_block.postDef for in_block in block.ins)
+	for (const auto &[var_idx, dsaIndexPerBlock] : dsaIndexPerBlockPerVar) {
+		//dsaIndexPerBlock[]
+		auto maxIt = std::max_element(dsaIndexPerBlock.begin(), dsaIndexPerBlock.end());
+		size_t deepestBlock = maxIt->first;
+		size_t maxIndex = maxIt->second;
+		cout << "*** " << this->vars[var_idx].name << "[" << deepestBlock << "]: " << maxIndex << endl;
 
-	//TODO: Do all input blocks end with the same index or are there redefinition-count mismatches?
-	// Are any input blocks there any redefinition-count mismatchs from any inputs?
-	//for (auto [block_idx, dsa_count] : dsaIndexPerBlock) {}
-	liveDefinitions[var_idx] = maxIndex;
-}
+		//TODO: Do all input blocks end with the same index or are there redefinition-count mismatches?
+		// Are any input blocks there any redefinition-count mismatchs from any inputs?
+		//for (auto [block_idx, dsa_count] : dsaIndexPerBlock) {}
+		liveDefinitions[var_idx] = maxIndex;
+	}
 
-return liveDefinitions;
+	return liveDefinitions;
 }
 
 size_t graph::getEnumeratedVar(size_t varIdx, size_t num) {
@@ -1384,24 +1369,41 @@ size_t graph::getEnumeratedVar(size_t varIdx, size_t num) {
 	return enumeratedVarIdx;
 }
 
+void _debugPrint(queue<size_t> s) {
+	cout << ">> ";
+	while (!s.empty()) {
+		cout << s.front() << " ";
+		s.pop();
+	}
+	cout << endl;
+}
+
 void graph::convertToDSA() {
 	this->computeControlFlowGraph();
 	//this->computeUseDefChains();
 
 	// Populate pre- & post- reaching definitions
 	// Use [forward] iterative "Worklist" algorithm for data flow (remarkably stable, block-order-invariant)
-	stack<size_t> worklist;
-	for (vector<controlFlowBlock>::reverse_iterator blockIt = this->controlFlowGraph.rbegin(); blockIt != this->controlFlowGraph.rend(); ++blockIt) {
-		worklist.push(blockIt->uid);  // Populate stack with first element at the top
+	queue<size_t> worklist;
+	//for (auto blockIt = this->controlFlowGraph.begin(); blockIt != this->controlFlowGraph.end(); ++blockIt) {
+	//	worklist.push(blockIt->uid);  // Populate stack with first element at the top
+	//}
+	if (not this->controlFlowGraph.empty()) {
+		worklist.push(this->controlFlowGraph[0].uid);
 	}
 
 	size_t workCount = 0;
 	while (not worklist.empty()) {
 		workCount++;
-		cout << "-=-=-=-=-=-=-=-=-=-=-=-=- <><> " << workCount << endl;
-		size_t blockId = worklist.top();
+
+		cout << endl;
+		_debugPrint(worklist);
+
+		size_t blockId = worklist.front();
 		worklist.pop();
 		controlFlowBlock &block = this->controlFlowGraph[blockId];
+
+		cout << "-=-=-=-=-=-=-=-=-=-=-=-=- " << workCount << " <><> " << blockId << endl;
 
 		// Populate pre- definitions based on in-blocks
 		unordered_map<size_t, size_t> liveDefinitions = this->mergeDefinitionsBeforeBlock(blockId);
@@ -1466,7 +1468,8 @@ void graph::convertToDSA() {
 		// Populate post-definitions based on local transformations, if any occurred
 		//TODO: block.postPef = transfer(blockId, block.preDefs) // b.gen u (b.predef - b.kill)
 		if (liveDefinitions != block.postDefs) {
-			std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){ cout << this->vars[d.first].name << "[" << d.second << "], "; });
+			std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){
+				cout << this->vars[d.first].name << "[" << d.second << "], "; });
 			cout << endl;
 			block.postDefs = liveDefinitions;
 
