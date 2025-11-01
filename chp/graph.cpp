@@ -1082,7 +1082,20 @@ void graph::computeControlFlowGraph() {
 		size_t current_block_uid = this->transitionToBlock[current_it.index];
 		chp::graph::controlFlowBlock current_block = this->controlFlowGraph[current_block_uid];
 
-		// Crawl to transitions/statements up next
+		// If statement is an assignment, document gen-kill sets
+		auto [var_assigned, prevDefinitions] = this->getPreviousDefinitions(current_it, current_path);
+		if (var_assigned != -1) {
+			this->controlFlowGraph[current_block.uid].gens[current_it.index] = var_assigned;
+
+			if (not prevDefinitions.empty()) {
+				size_t transitionToKill = prevDefinitions.back();
+				this->controlFlowGraph[current_block.uid].kills[current_it.index] = transitionToKill;
+			}
+		}
+
+		//
+		// Crawl to & connect transitions/statements up next
+		//
 		vector<petri::iterator> out_transitions;
 		for (petri::iterator out_place : this->next(current_it)) {
 			for (petri::iterator out_transition : this->next(out_place)) {
@@ -1130,16 +1143,6 @@ void graph::computeControlFlowGraph() {
 				this->transitionToBlock[next_transition_it.index] = new_block_uid;
 				this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
 
-				auto [var_assigned, prevDefinitions] = this->getPreviousDefinitions(current_it, current_path);
-				if (var_assigned != -1) { 
-					this->controlFlowGraph[current_block.uid].gens[current_it.index] = var_assigned;
-
-					if (not prevDefinitions.empty()) {
-						size_t transitionToKill = prevDefinitions.back();
-						this->controlFlowGraph[current_block.uid].kills[current_it.index] = transitionToKill;
-					}
-				}
-
 				current_path.push_back(next_transition_it);
 				queue.push(current_path);
 				continue;
@@ -1149,16 +1152,6 @@ void graph::computeControlFlowGraph() {
 			this->controlFlowGraph[current_block_uid].last = next_transition_it;
 			this->controlFlowGraph[current_block_uid].transitions.push_back(next_transition_it);
 			this->transitionToBlock[next_transition_it.index] = current_block.uid;
-
-			auto [var_assigned, prevDefinitions] = this->getPreviousDefinitions(current_it, current_path);
-			if (var_assigned != -1) { 
-				this->controlFlowGraph[current_block.uid].gens[current_it.index] = var_assigned;
-
-				if (not prevDefinitions.empty()) {
-					size_t transitionToKill = prevDefinitions.back();
-					this->controlFlowGraph[current_block.uid].kills[current_it.index] = transitionToKill;
-				}
-			}
 
 			current_path.push_back(next_transition_it);
 			queue.push(current_path);
@@ -1194,16 +1187,6 @@ void graph::computeControlFlowGraph() {
 			this->controlFlowGraph.push_back(new_block);
 			this->transitionToBlock[next_transition_it.index] = new_block_uid;
 			this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
-
-			auto [var_assigned, prevDefinitions] = this->getPreviousDefinitions(current_it, current_path);
-			if (var_assigned != -1) { 
-				this->controlFlowGraph[current_block.uid].gens[current_it.index] = var_assigned;
-
-				if (not prevDefinitions.empty()) {
-					size_t transitionToKill = prevDefinitions.back();
-					this->controlFlowGraph[current_block.uid].kills[current_it.index] = transitionToKill;
-				}
-			}
 
 			if (!visited.contains(next_transition_it)) {
 				current_path.push_back(next_transition_it);
@@ -1438,7 +1421,7 @@ void graph::convertToDSA() {
 				//size_t prev_defining_transition = block.kills[transitionIdx];
 				liveDefinitions[redefinedVar]++;
 
-				// Append first-time definition
+			// Append first-time definition
 			} else if (block.gens.contains(transitionIdx)) {
 				size_t definedVar = block.gens[transitionIdx];
 				liveDefinitions[definedVar] = 0;
