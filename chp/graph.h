@@ -161,8 +161,8 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 		size_t uid;
 		set<size_t> ins;
 		set<size_t> outs;
-		petri::iterator first;
-		petri::iterator last;
+		petri::iterator first; 
+		petri::iterator last;  //TODO: delete first+last: redundant with transitions vector
 		vector<petri::iterator> transitions;
 		unordered_map<size_t, size_t> gens;  // transition_idx of def -> var defined
 		unordered_map<size_t, size_t> kills;  // transition_idx of redef -> prev transition_idx def
@@ -176,6 +176,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	//size_t getReachingDef(size_t var_idx, size_t transition_idx);
 	pair<int, vector<size_t>> getPreviousDefinitions(petri::iterator it, const vector<petri::iterator> &v);
 	size_t getEnumeratedVar(size_t varIdx, size_t num);
+	void increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t dsaCountAfter);
 	unordered_map<size_t, size_t> mergeDefinitionsBeforeBlock(size_t blockId);
 	void computeControlFlowGraph();
 

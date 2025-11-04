@@ -71,6 +71,7 @@ transition transition::merge(int composition, const transition &t0, const transi
 		}
 		result.guard.minimize();
 		return result;
+
 	} else if (composition == petri::choice) {
 		transition result(t0.guard | t1.guard, false);
 		result.action.terms.insert(result.action.terms.end(), t0.action.terms.begin(), t0.action.terms.end());
@@ -1319,6 +1320,57 @@ pair<int, vector<size_t>> graph::getPreviousDefinitions(petri::iterator transiti
 	return pair<int, vector<size_t>>(var_assigned, prev_defs);
 }
 
+void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t dsaCountAfter) {
+	//TODO: assumes this call & all params are a valid copy assignment. Safeguard if calling under new conditions
+
+	// Grab old DSA count from postDefs
+	chp::graph::controlFlowBlock &block = this->controlFlowGraph[blockIdx];
+	string varName = this->vars[varIdx].name;
+	size_t dsaCountBefore = block.postDefs[varIdx];
+
+	cout << " TODO: B[" << blockIdx << "] << " << varName << "_" << dsaCountAfter << " := " << varName << "_" << dsaCountBefore << endl;
+
+	// First, clip block-exiting arc
+	petri::iterator tailTransitionIt = block.transitions.back();
+	chp::transition &tailTransition = this->transitions[tailTransitionIt.index];
+
+	//petri::iterator outboundArc = this->out(tailTransitionIt)[0];
+	petri::iterator mergePlace = this->next(tailTransitionIt)[0];
+	petri::iterator outboundArc = this->arc_between(tailTransitionIt, mergePlace);
+	//TODO: verify arc returned is valid: if (outboundArc == petri::iterator()) { cerr << endl; }
+	cout << " :: " << outboundArc << endl;
+
+
+	// Insert new copy assignment at the end of the block (update postDefs here in this function or above? ...probably above, doubly-so?)
+	arithmetic::Action newCopyAssignment;
+	size_t preVarIdx = this->getEnumeratedVar(varIdx, dsaCountBefore);
+	size_t postVarIdx = this->getEnumeratedVar(varIdx, dsaCountAfter);
+	newCopyAssignment.lvalue = arithmetic::Expression::varOf(postVarIdx);
+	newCopyAssignment.rvalue = arithmetic::Expression::varOf(preVarIdx);
+
+	chp::transition newCopyAssignmentTransition(
+			arithmetic::Expression::vdd(), arithmetic::Choice({{newCopyAssignment}}));
+	size_t newTransitionIdx = this->transitions.insert(newCopyAssignmentTransition);
+
+	this->super::erase_arc(outboundArc);
+	this->super::mark_modified();
+
+	// Connect old tail transition to new tail
+	petri::iterator newCopyAssignmentTransitionIt(petri::transition::type, newTransitionIdx);
+	this->super::connect(newCopyAssignmentTransitionIt, mergePlace);
+	this->super::connect(tailTransitionIt, newCopyAssignmentTransitionIt);
+
+	block.transitions.push_back(newCopyAssignmentTransitionIt);
+	block.last = newCopyAssignmentTransitionIt;
+	block.gens[newTransitionIdx] = varIdx;
+
+	//TODO: RETVRN HERE
+	block.kills[newTransitionIdx] = varIdx;  //TODO: always a redef? what if this post-selection includes a var that was only first defined in ONE of the pre-selection branches? Probably fine. This seems like a deep semanntic unknown regarding what SHOULUD the default "none" other value be if we DO the copy-assignment for a first-def? I guess for that reason it's not a valid program & should not compile.
+	//TODO: ugh, it needs to reverse walk to find it. Does this need to be identified during intiial path-find crawl?
+	// Reverse-walk for kill definition [if encessary, might not even need to]
+	block.postDefs[varIdx] = dsaCountAfter;
+}
+
 unordered_map<size_t, size_t> graph::mergeDefinitionsBeforeBlock(size_t blockId) {
 	controlFlowBlock &block = this->controlFlowGraph[blockId];
 	unordered_map<size_t, size_t> liveDefinitions;
@@ -1340,17 +1392,23 @@ unordered_map<size_t, size_t> graph::mergeDefinitionsBeforeBlock(size_t blockId)
 
 	// Identify any post-selection variables that need additional copy assignments
 	//TODO: block.preDefs merge/union(in_block.postDef for in_block in block.ins)
-	for (const auto &[var_idx, dsaIndexPerBlock] : dsaIndexPerBlockPerVar) {
+	for (const auto &[varIdx, dsaIndexPerBlock] : dsaIndexPerBlockPerVar) {
 		//dsaIndexPerBlock[]
+		// Start block with highest DSA index, in case of mismatch
 		auto maxIt = std::max_element(dsaIndexPerBlock.begin(), dsaIndexPerBlock.end());
 		size_t deepestBlock = maxIt->first;
 		size_t maxIndex = maxIt->second;
-		cout << "*** " << this->vars[var_idx].name << "[" << deepestBlock << "]: " << maxIndex << endl;
+		liveDefinitions[varIdx] = maxIndex;
+		cout << "*** " << this->vars[varIdx].name << "[" << deepestBlock << "]: " << maxIndex << endl;
 
-		//TODO: Do all input blocks end with the same index or are there redefinition-count mismatches?
-		// Are any input blocks there any redefinition-count mismatchs from any inputs?
-		//for (auto [block_idx, dsa_count] : dsaIndexPerBlock) {}
-		liveDefinitions[var_idx] = maxIndex;
+		// Synchronize any input block postDefs that fell behind peers
+		// by appending a copy-assignment to the new max
+		// (e.g. one in-block didn't touch var x, but another redefined it twice)
+		for (auto [blockIdx, dsaCount] : dsaIndexPerBlock) {
+			if (dsaCount < maxIndex) {  //TODO: make method idempotent instead of checking? nah, too clever for now
+				this->increaseBlockVarToDSAIndex(blockIdx, varIdx, maxIndex);
+			}
+		}
 	}
 
 	return liveDefinitions;
