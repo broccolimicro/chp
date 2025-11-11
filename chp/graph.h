@@ -177,6 +177,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t dsaCountAfter);
 	unordered_map<size_t, size_t> mergeDefinitionsBeforeBlock(size_t blockId);
 	void computeControlFlowGraph();
+	void convertToDSA();
 
 	struct useDefChain {
 		string name;

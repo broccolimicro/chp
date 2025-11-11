@@ -1344,34 +1344,31 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 	cout << " :: " << outboundArc << endl;
 
 
-	// Insert new copy assignment at the end of the block (update postDefs here in this function or above? ...probably above, doubly-so?)
+	// Insert new "v_new := v_old;" copy-assignment at the end of the block
+	//  (update postDefs here in this function or above? ...probably above, doubly-so?)
 	arithmetic::Action newCopyAssignment;
 	size_t preVarIdx = this->getEnumeratedVar(varIdx, dsaCountBefore);
 	size_t postVarIdx = this->getEnumeratedVar(varIdx, dsaCountAfter);
 	newCopyAssignment.lvalue = arithmetic::Expression::varOf(postVarIdx);
 	newCopyAssignment.rvalue = arithmetic::Expression::varOf(preVarIdx);
 
+	//TODO: ugh, I should re-use petri/graph.h::insert_after
 	chp::transition newCopyAssignmentTransition(
 			arithmetic::Expression::vdd(), arithmetic::Choice({{newCopyAssignment}}));
 	size_t newTransitionIdx = this->transitions.insert(newCopyAssignmentTransition);
 
+	// Insert copy-assignment after the block's last transition
 	this->super::erase_arc(outboundArc);
-	this->super::mark_modified();
+	this->super::mark_modified();  //TODO: required by petri?
 
-	// Connect old tail transition to new tail
 	petri::iterator newCopyAssignmentTransitionIt(petri::transition::type, newTransitionIdx);
 	this->super::connect(newCopyAssignmentTransitionIt, mergePlace);
 	this->super::connect(tailTransitionIt, newCopyAssignmentTransitionIt);
 
 	block.transitions.push_back(newCopyAssignmentTransitionIt);
 	block.last = newCopyAssignmentTransitionIt;
-	block.gens[newTransitionIdx] = varIdx;
-
-	//TODO: RETVRN HERE
-	block.kills[newTransitionIdx] = varIdx;  //TODO: always a redef? what if this post-selection includes a var that was only first defined in ONE of the pre-selection branches? Probably fine. This seems like a deep semanntic unknown regarding what SHOULUD the default "none" other value be if we DO the copy-assignment for a first-def? I guess for that reason it's not a valid program & should not compile.
-	//TODO: ugh, it needs to reverse walk to find it. Does this need to be identified during intiial path-find crawl?
-	// Reverse-walk for kill definition [if encessary, might not even need to]
-	block.postDefs[varIdx] = dsaCountAfter;
+	block.gens[newTransitionIdx] = postVarIdx;
+	block.postDefs[postVarIdx] = dsaCountAfter;
 }
 
 unordered_map<size_t, size_t> graph::mergeDefinitionsBeforeBlock(size_t blockId) {
