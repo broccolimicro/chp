@@ -1345,7 +1345,7 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 
 
 	// Insert new "v_new := v_old;" copy-assignment at the end of the block
-	//  (update postDefs here in this function or above? ...probably above, doubly-so?)
+	// TODO: update postDefs here in this function or above? ...probably above, doubly-so?
 	arithmetic::Action newCopyAssignment;
 	size_t preVarIdx = this->getEnumeratedVar(varIdx, dsaCountBefore);
 	size_t postVarIdx = this->getEnumeratedVar(varIdx, dsaCountAfter);
@@ -1359,7 +1359,7 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 
 	// Insert copy-assignment after the block's last transition
 	this->super::erase_arc(outboundArc);
-	this->super::mark_modified();  //TODO: required by petri?
+	this->super::mark_modified();  //TODO: required by petri? not used in insert_after...
 
 	petri::iterator newCopyAssignmentTransitionIt(petri::transition::type, newTransitionIdx);
 	this->super::connect(newCopyAssignmentTransitionIt, mergePlace);
@@ -1414,8 +1414,8 @@ unordered_map<size_t, size_t> graph::mergeDefinitionsBeforeBlock(size_t blockId)
 	return liveDefinitions;
 }
 
-size_t graph::getEnumeratedVar(size_t varIdx, size_t num) {
-	string enumeratedName = this->vars[varIdx].name + std::to_string(num);
+size_t graph::getEnumeratedVar(size_t varIdx, size_t num, string delimiter) {
+	string enumeratedName = this->vars[varIdx].name + delimiter + std::to_string(num);
 
 	int enumeratedVarIdx = this->netIndex(enumeratedName);
 	if (enumeratedVarIdx == -1) {
@@ -1538,7 +1538,201 @@ void graph::convertToDSA() {
 		}
 	}
 
-	cout << "DSA'd" << endl;
+	cout << "DSA'd." << endl;
+}
+
+vector<size_t> graph::getVarsFromExpression(const arithmetic::Expression &e) {
+	if (e.isUndef()) { return {}; }
+	if (e.top.isVar() && e.size() == 0) { return {e.top.index}; }
+
+	vector<size_t> vars;
+	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+
+		// Iterate across all sub-expression leaves
+		//TODO: introduce some simpler "walkLeaves"-esque helper method into Expression?
+		const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+		for (const arithmetic::Operand &operand : operation.operands) {
+			if (operand.type == arithmetic::Operand::Type::VAR) {
+				vars.push_back(operand.index);
+			}
+		}
+	}
+
+	return vars;
+}
+
+//TODO: Clean up this sloppy algorithmic solution. No need to fully-traverse again.
+vector<size_t> graph::findOutputChannelInExpression(const arithmetic::Expression &e) {
+	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
+
+	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+		// Iterate across all sub-expression leaves
+		const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+		for (const arithmetic::Operand &operand : operation.operands) {
+			if (operand.cnst.sval == "send") {
+				return {e.sub.elems.elems[0].operands[0].index};
+			}
+		}
+	}
+
+	return {};
+}
+
+void graph::renameVarAtTransition(size_t varIdx, size_t transitionIdx) {
+	return;
+}
+
+//size_t graph::getVarDefTransition(size_t varIdx) {
+//	useDefChain &chain = this->getVarUseDefChain(varIdx);
+//	return chain.defs[0];
+//}
+
+// Data-driven Decomposition
+void graph::project() {
+	cout << endl << "projecting." << endl;
+
+	//
+	// 1) Build Dependency Sets
+	//
+	unordered_map<size_t, vector<size_t>> dependencySets;
+
+	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+		petri::iterator t_it(transition::type, transition_idx);
+		if (not this->is_valid(t_it)) { continue; }
+
+		// Extract Dependency Set from transition, if there is any
+		const chp::transition &tran = this->transitions[transition_idx];
+		vector<size_t> guardVars = this->getVarsFromExpression(tran.guard);
+
+		const arithmetic::Choice &action = tran.action;
+		for (const auto &term : action.terms) {
+			for (const auto &action : term.actions) {
+				vector<size_t> leftVars = this->getVarsFromExpression(action.lvalue);
+
+				//TODO: is_definition parameter could be more robust ":=" assignment operand matching
+				vector<size_t> rightVars = this->getVarsFromExpression(action.rvalue);
+
+				// If not assignment, check for output-channel (a.k.a. "send()") which is assignment-ish
+				//TODO: there must be a better way to pre-index not just channels vs vars DURING synthesis but beforehand
+				//  AND it should somehow index the partition between input vs output channels (perhaps, in-only, out-only, and bi-use'd?)
+				//  within "bi-used" we can separate "internal-communication only" channels vs bi-used chans w/ external side-effects/dependencies
+				if (leftVars.empty()) {
+					vector<size_t> outputChannels = this->findOutputChannelInExpression(action.rvalue);
+
+					if (not outputChannels.empty()) {
+						size_t outputChannel = outputChannels[0];
+						cout << " chan[" << this->vars[outputChannel].name << "]" << endl;
+
+						// Prune redundant self from right-hand side
+						rightVars.erase(rightVars.begin());  //TODO: optimize this expensive operation
+						dependencySets[outputChannel] = rightVars;
+					}
+
+				} else {
+					//TODO: what if lvalue is a larger expression than just 1 left-var on top? ...or "-x = 3"
+					// Assume for now, left-hand is always direct single-assignment
+					dependencySets[leftVars[0]] = rightVars;
+				}
+			}
+		}
+	}
+
+	cout << " ~~> ~~> ~~> " << endl;
+	std::for_each(dependencySets.begin(), dependencySets.end(), [this](auto &dep) {
+			cout << this->vars[dep.first].name << " <- ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
+			cout << endl;
+			});
+
+	//TODO: verify Dependency Sets & ensure only channel-Sends are included
+	//TODO: this is a great test suite to write
+	cout << " ~> ~> ~> ";
+	for (auto &[varIdx,v] : dependencySets) { cout << this->vars[varIdx].name << " "; }
+	cout << endl;
+
+	// Index definitions & references per varibale
+	this->computeUseDefChains();
+	for (auto &[aVarIdx, aUseDefChain] : this->useDefChains) {
+		for (auto &[bVarIdx, bUseDefChain] : this->useDefChains) {
+			//dependencySets[varIdx].push_back();
+			if (aVarIdx == bVarIdx) { continue; }
+
+			if (std::find(aUseDefChain.uses.begin(), aUseDefChain.uses.end(), bVarIdx) != aUseDefChain.uses.end()) {
+				dependencySets[bVarIdx].push_back(aVarIdx);
+			}
+		}
+	}
+	//TODO: print & dehug/verify useDefChains again
+
+	//
+	// 2) Insert copy variables
+	//
+	std::unordered_map<size_t, size_t> dependencyUseCounter;
+	for (auto const &[target, dependencies] : dependencySets) {
+		for (size_t dependency : dependencies) {
+			dependencyUseCounter[dependency]++;
+		}
+	}
+
+	// Identify multi-use variables that need copies / to fork
+	for (auto const &[dependency, useCount] : dependencyUseCounter) {
+		cout << " __ " << this->vars[dependency].name << ": " << useCount
+			<< ((useCount > 1) ? "!" : "") << endl;
+
+		if (useCount > 1) {
+
+			// Insert new "x_fork := x;" copy-assignment immediately after x assignment
+			// This serves as the base of a fork, splitting/parallelizing out to every use/reference
+			size_t varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork_");
+			arithmetic::Action forkAssignment;
+			forkAssignment.lvalue = arithmetic::Expression::varOf(varForkIdx);
+			forkAssignment.rvalue = arithmetic::Expression::varOf(dependency);
+
+			chp::transition forkAssignmentTransition(
+					arithmetic::Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
+			//size_t forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
+			//petri::iterator forkIt(petri::transition::type, forkTransitionIdx);
+
+			//TODO: this->renameVarAtTransition(defTransitionIdx, dependency, varForkIdx);
+
+			useDefChain &varUseDefChain = this->useDefChains[dependency];
+			if (varUseDefChain.defs.empty()) { continue; }
+			size_t defTransitionIdx = varUseDefChain.defs[0];
+			//cout << this->transitions[defTransitionIdx] << endl;
+			petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
+			this->super::insert_after(defTransitionIt, forkAssignmentTransition);
+			//TODO: RETVRN HERE (package this up into a helper call above, renameVarAtTransition,
+			//  including the renaming of all references after. We made the new name assignment, time to USE it lol
+			// (ugh, how do the more specialized post-fork child-copies respecticaly ONLY rename themselves
+			//  versus destructively all others? meh, it'll be obvious.)
+
+
+			for (size_t copyCount = 0; copyCount < useCount; copyCount++) {
+				size_t varCopyIdx = this->getEnumeratedVar(dependency, copyCount, "_cp_");
+				cout << "^%$ " << this->vars[varCopyIdx].name << endl;
+
+				//TODO: now insert the "x_cp_n := x_fork" copies AND rename their uses
+				//chp::transition
+				//this->super::insert_after();
+			}
+		}
+		cout << endl;
+	}
+
+	//
+	// 3) Insert internal-communication channels
+	//
+
+	//
+	// 4) Build Projection Sets
+	//
+	unordered_map<size_t, vector<size_t>> projectionSets;
+
+	//
+	// 5) Project
+	//
+
+	cout << "projected." << endl;
 }
 
 }

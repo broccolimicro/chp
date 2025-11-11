@@ -173,7 +173,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	//size_t getReachingDef(size_t var_idx, size_t transition_idx);
 	pair<int, vector<size_t>> getPreviousDefinitions(petri::iterator it, const vector<petri::iterator> &v);
-	size_t getEnumeratedVar(size_t varIdx, size_t num);
+	size_t getEnumeratedVar(size_t varIdx, size_t num, string delimiter="_");
 	void increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t dsaCountAfter);
 	unordered_map<size_t, size_t> mergeDefinitionsBeforeBlock(size_t blockId);
 	void computeControlFlowGraph();
@@ -193,7 +193,15 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void extractUseDefFromTransition(size_t transition_idx);
 	void computeUseDefChains();
 
-	void convertToDSA();
+	vector<size_t> getVarsFromExpression(const arithmetic::Expression &e);
+	vector<size_t> findOutputChannelInExpression(const arithmetic::Expression &e);
+
+	//TODO: better name for higher-order transformation? substitution? variable renaming? lifetime / live range splitting?
+	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
+	void renameVarAtTransition(size_t varIdx, size_t transitionIdx);
+
+	void project();
+	void decompose();
 };
 
 }
