@@ -149,20 +149,18 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	using super::merge;
 	Mapping<petri::iterator> merge(graph g);
 
-	void post_process(bool proper_nesting=false, bool aggressive=false);
-	void decompose();
+	arithmetic::Expression exclusion(int index) const;
 	void expand();
 	void flatten(bool debug=false);
 	bool isFlat() const;  //TODO: cache in property for quick look-up
-	arithmetic::Expression exclusion(int index) const;
+	void post_process(bool proper_nesting=false, bool aggressive=false);
 
-	//TODO: petri::iterator -> size_t?
 	struct controlFlowBlock {
 		size_t uid;
 		set<size_t> ins;
 		set<size_t> outs;
 		petri::iterator first; 
-		petri::iterator last;  //TODO: delete first+last: redundant with transitions vector
+		petri::iterator last;  //TODO: delete first+last? redundant with transitions vector
 		vector<petri::iterator> transitions;
 		unordered_map<size_t, size_t> gens;  // transition_idx of def -> var defined
 		unordered_map<size_t, size_t> kills;  // transition_idx of redef -> prev transition_idx def
@@ -180,18 +178,19 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	unordered_map<size_t, size_t> mergeDefinitionsBeforeBlock(size_t blockId);
 	void computeControlFlowGraph();
 
-	//struct useDefChain {
-	//	string name;
-	//	size_t DSA_index = 0;
-	//	vector<size_t> defs;
-	//	vector<size_t> uses;
-	//};
+	struct useDefChain {
+		string name;
+		//size_t index;
+		//size_t DSAIndex = 0;
+		vector<size_t> defs;
+		vector<size_t> uses;
+	};
 
-	//unordered_map<size_t, useDefChain> useDefChains;
-	//void setUseDef(size_t var_idx, size_t transition_idx, bool is_definition=false);
-	//void extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
-	//void extractUseDefFromTransition(size_t transition_idx);
-	//void computeUseDefChains();
+	unordered_map<size_t, useDefChain> useDefChains;
+	void setUseDef(size_t var_idx, size_t transition_idx, bool is_definition=false);
+	void extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
+	void extractUseDefFromTransition(size_t transition_idx);
+	void computeUseDefChains();
 
 	void convertToDSA();
 };

@@ -528,10 +528,12 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 
 void graph::decompose() {  //chp::graph &g) {}
 	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
-	cout << endl << "_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
+	cout << endl << "\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
 	cout << ">>> " << this->name << endl;
 
 	this->convertToDSA();
+	this->project();
+
 	cout << "decomposed." << endl;
 
 	// TODO Process Decomposition and Projection
@@ -1200,72 +1202,73 @@ void graph::computeControlFlowGraph() {
 	this->controlFlowGraphReady = true;
 }
 
-//void graph::setUseDef(size_t chp_var_idx, size_t transition_idx, bool is_definition) {
-//	string chp_var_name = this->netAt(chp_var_idx);
-//
-//	// New variable? Record its name
-//	if (this->useDefChains.find(chp_var_idx) == this->useDefChains.end()) {
-//		this->useDefChains[chp_var_idx].name = chp_var_name;
-//	}
-//
-//	if (is_definition) {
-//		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
-//		//this->defs[chp_var_name].push_back(transition_idx);
-//		cout << "DEF _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
-//
-//	} else {
-//		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
-//		//this->uses[chp_var_name].push_back(transition_idx);
-//		cout << "USE _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
-//	}
-//}
-//
-//void graph::extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression &e, bool is_definition) {
-//	if (is_definition && e.top.isVar() && e.size() == 0) {
-//		this->setUseDef(e.top.index, transition_idx, true);
-//
-//	} else if (not e.isUndef()) { //if (e.isExpr()) {
-//		for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
-//
-//			// Iterate across all sub-expression leaves
-//			//TODO: introduce some simpler "walkLeaves"-esque helper method into Expression?
-//			const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
-//			for (const arithmetic::Operand &operand : operation.operands) {
-//				if (operand.type == arithmetic::Operand::Type::VAR) {
-//					this->setUseDef(operand.index, transition_idx, is_definition);
-//				}
-//			}
-//		}
-//	} // else if (not e.isUndef()) {}
-//}
-//
-//void graph::extractUseDefFromTransition(size_t transition_idx) {
-//	const chp::transition &tran = this->transitions[transition_idx];
-//	extractUseDefFromExpression(transition_idx, tran.guard);
-//
-//	const arithmetic::Choice &action = tran.action;
-//	for (const auto &term : action.terms) {
-//		for (const auto &action : term.actions) {
-//			extractUseDefFromExpression(transition_idx, action.lvalue, true);
-//
-//			//TODO: is_definition parameter could be more robust ":=" assignment operand matching
-//			extractUseDefFromExpression(transition_idx, action.rvalue);
-//		}
-//	}
-//}
-//
-//void graph::computeUseDefChains() {
-//	this->useDefChainsReady = false;
-//
-//	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
-//		petri::iterator t_it(transition::type, transition_idx);
-//		if (not this->is_valid(t_it)) { continue; }
-//
-//		extractUseDefFromTransition(transition_idx);
-//	}
-//
-//	this->useDefChainsReady = true;
-//}
+void graph::setUseDef(size_t chp_var_idx, size_t transition_idx, bool is_definition) {
+	string chp_var_name = this->netAt(chp_var_idx);
+
+	// New variable? Record its name
+	if (this->useDefChains.find(chp_var_idx) == this->useDefChains.end()) {
+		this->useDefChains[chp_var_idx].name = chp_var_name;
+		//this->useDefChains[chp_var_idx].index = chp_var_idx;
+	}
+
+	if (is_definition) {
+		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
+		//this->defs[chp_var_name].push_back(transition_idx);
+		cout << "DEF _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+
+	} else {
+		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
+		//this->uses[chp_var_name].push_back(transition_idx);
+		cout << "USE _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+	}
+}
+
+void graph::extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression &e, bool is_definition) {
+	if (is_definition && e.top.isVar() && e.size() == 0) {
+		this->setUseDef(e.top.index, transition_idx, true);
+
+	} else if (not e.isUndef()) { //if (e.isExpr()) {
+		for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+
+			// Iterate across all sub-expression leaves
+			//TODO: introduce some simpler "walkLeaves"-esque helper method into Expression?
+			const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+			for (const arithmetic::Operand &operand : operation.operands) {
+				if (operand.type == arithmetic::Operand::Type::VAR) {
+					this->setUseDef(operand.index, transition_idx, is_definition);
+				}
+			}
+		}
+	} // else if (not e.isUndef()) {}
+}
+
+void graph::extractUseDefFromTransition(size_t transition_idx) {
+	const chp::transition &tran = this->transitions[transition_idx];
+	extractUseDefFromExpression(transition_idx, tran.guard);
+
+	const arithmetic::Choice &action = tran.action;
+	for (const auto &term : action.terms) {
+		for (const auto &action : term.actions) {
+			extractUseDefFromExpression(transition_idx, action.lvalue, true);
+
+			//TODO: is_definition parameter could be more robust ":=" assignment operand matching
+			extractUseDefFromExpression(transition_idx, action.rvalue);
+		}
+	}
+}
+
+void graph::computeUseDefChains() {
+	this->useDefChainsReady = false;
+
+	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
+		petri::iterator t_it(transition::type, transition_idx);
+		if (not this->is_valid(t_it)) { continue; }
+
+		extractUseDefFromTransition(transition_idx);
+	}
+
+	this->useDefChainsReady = true;
+}
 
 pair<int, vector<size_t>> graph::getPreviousDefinitions(petri::iterator transition_it, const vector<petri::iterator> &prev_transitions) {
 	//TODO: rename prev_transitions param, now that I include current def
