@@ -1492,12 +1492,13 @@ void graph::convertToDSA() {
 				//std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){ cout << this->vars[d.first].name << "[" << d.second << "], "; }); cout << endl;
 
 				// Enumerate current expression w/ DSA indices
-				Mapping<size_t> postDefIndices;
+				Mapping<size_t> postDefIndices(std::numeric_limits<size_t>::max(), true);
 				for (auto [varIdx, dsaIdx] : liveDefinitions) {
 					size_t dsaVarIdx = this->getEnumeratedVar(varIdx, dsaIdx);
 					postDefIndices.set(varIdx, dsaVarIdx);
 				}
 
+				//TODO: give these 2 mappings EVEN MORE explicit naming with some sort of "rename" postfix
 				Mapping<size_t> preDefIndices(postDefIndices);
 				if (isRedefinition) {
 					size_t redefinedVar = block.gens[transitionIdx];
@@ -1578,14 +1579,33 @@ vector<size_t> graph::findOutputChannelInExpression(const arithmetic::Expression
 	return {};
 }
 
-void graph::renameVarAtTransition(size_t varIdx, size_t transitionIdx) {
-	return;
-}
+//petri::iterator graph::splitVarUses() { }
+//petri::iterator graph::renameVarUseAferTransition(size_t insertionTransitionIdx, size_t preVar, size_t postVar) {
+//
+//	arithmetic::Action reassignment;
+//	reassignment.lvalue = arithmetic::Expression::varOf(postVar);
+//	reassignment.rvalue = arithmetic::Expression::varOf(preVar);
+//
+//	chp::transition renameTransition(
+//			arithmetic::Expression::vdd(), arithmetic::Choice({{reassignment}}));
+//	//size_t forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
+//	//petri::iterator forkIt(petri::transition::type, forkTransitionIdx);
+//
+//	//TODO: extract this out (to be computed before when identifying transition, this way I can use it either right after the definiton or somewhere else)
+//	useDefChain &varUseDefChain = this->useDefChains[preVar];
+//	if (varUseDefChain.defs.empty()) { continue; }
+//	size_t insertionTransitionIdx = varUseDefChain.defs[0];
+//	//cout << this->transitions[insertionTransitionIdx] << endl;
+//
+//	petri::iterator insertionPoint(petri::transition::type, insertionTransitionIdx);
+//	return this->super::insert_after(insertionPoint, renameTransition);
+//}
 
 //size_t graph::getVarDefTransition(size_t varIdx) {
 //	useDefChain &chain = this->getVarUseDefChain(varIdx);
 //	return chain.defs[0];
 //}
+
 
 // Data-driven Decomposition
 void graph::project() {
@@ -1594,7 +1614,7 @@ void graph::project() {
 	//
 	// 1) Build Dependency Sets
 	//
-	unordered_map<size_t, vector<size_t>> dependencySets;
+	unordered_map<size_t, vector<size_t>> dependencySets;  //TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets!
 
 	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
 		petri::iterator t_it(transition::type, transition_idx);
@@ -1650,70 +1670,115 @@ void graph::project() {
 	for (auto &[varIdx,v] : dependencySets) { cout << this->vars[varIdx].name << " "; }
 	cout << endl;
 
-	// Index definitions & references per varibale
+	// Index definitions & references per variable
 	this->computeUseDefChains();
-	for (auto &[aVarIdx, aUseDefChain] : this->useDefChains) {
-		for (auto &[bVarIdx, bUseDefChain] : this->useDefChains) {
-			//dependencySets[varIdx].push_back();
-			if (aVarIdx == bVarIdx) { continue; }
+	//TODO: umm, hwat? what was I trying with this transformation? Ahh, was this the previous, independent rendering of dependencySets?
+	//for (auto &[aVarIdx, aUseDefChain] : this->useDefChains) {
+	//	for (auto &[bVarIdx, bUseDefChain] : this->useDefChains) {
+	//		//dependencySets[varIdx].push_back();
+	//		if (aVarIdx == bVarIdx) { continue; }
 
-			if (std::find(aUseDefChain.uses.begin(), aUseDefChain.uses.end(), bVarIdx) != aUseDefChain.uses.end()) {
-				dependencySets[bVarIdx].push_back(aVarIdx);
-			}
-		}
-	}
+	//		if (std::find(aUseDefChain.uses.begin(), aUseDefChain.uses.end(), bVarIdx) != aUseDefChain.uses.end()) {
+	//			dependencySets[bVarIdx].push_back(aVarIdx);
+	//		}
+	//	}
+	//}
+
 	//TODO: print & dehug/verify useDefChains again
 
 	//
 	// 2) Insert copy variables
 	//
-	std::unordered_map<size_t, size_t> dependencyUseCounter;
+	//TODO: perhaps a Mapping<size_t> is more appropriate?
+	//  useDef:        def_idx -> <use_idx>
+	//  dependencySet: def_var -> <dep_var>
+	//  ???:           dep_var -> <def_var>   aHa! inverted/reversed/transposed dependencySet
+	//std::unordered_map<size_t, size_t> dependencyUseCounter;
+	//for (auto const &[target, dependencies] : dependencySets) {
+	//	for (size_t dependency : dependencies) {
+	//		dependencyUseCounter[dependency]++;
+	//	}
+	//}
+	std::unordered_map<size_t, set<size_t>> invertedDependencySet;  // value from dependencySet values -> set of keys in dependencySet who CONTAIN/map-to this value
 	for (auto const &[target, dependencies] : dependencySets) {
 		for (size_t dependency : dependencies) {
-			dependencyUseCounter[dependency]++;
+			invertedDependencySet[dependency].insert(target);
 		}
 	}
 
-	// Identify multi-use variables that need copies / to fork
-	for (auto const &[dependency, useCount] : dependencyUseCounter) {
-		cout << " __ " << this->vars[dependency].name << ": " << useCount
+	cout << " <~~ <~~ <~~ " << endl;
+	std::for_each(invertedDependencySet.begin(), invertedDependencySet.end(), [this](auto &dep) {
+			cout << this->vars[dep.first].name << " <- ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
+			cout << endl;
+			});
+
+	// Identify multi-use variables that need to fork into branching copies
+	//for (auto const &[dependency, useCount] : dependencyUseCounter) {
+	for (auto const &[target, dependencies] : invertedDependencySet) {
+		size_t useCount = dependencies.size();   //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
+		cout << " __ " << this->vars[target].name << ": " << useCount
 			<< ((useCount > 1) ? "!" : "") << endl;
 
 		if (useCount > 1) {
+			//TODO: RETVRN HERE (package this up into a helper call above, renameVarAtTransition,
+			//  including the renaming of all references after. We made the new name assignment, time to USE it lol
+			// (ugh, how do the more specialized post-fork child-copies respecticaly ONLY rename themselves
+			//  versus destructively all others? meh, it'll be obvious.)
+			//TODO: just drop the helper here: this->splitVarUses(x);
 
 			// Insert new "x_fork := x;" copy-assignment immediately after x assignment
 			// This serves as the base of a fork, splitting/parallelizing out to every use/reference
-			size_t varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork_");
+			size_t varForkIdx = this->getEnumeratedVar(target, 0, "_fork");
 			arithmetic::Action forkAssignment;
 			forkAssignment.lvalue = arithmetic::Expression::varOf(varForkIdx);
-			forkAssignment.rvalue = arithmetic::Expression::varOf(dependency);
+			forkAssignment.rvalue = arithmetic::Expression::varOf(target);
 
 			chp::transition forkAssignmentTransition(
 					arithmetic::Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
 			//size_t forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
 			//petri::iterator forkIt(petri::transition::type, forkTransitionIdx);
 
-			//TODO: this->renameVarAtTransition(defTransitionIdx, dependency, varForkIdx);
-
-			useDefChain &varUseDefChain = this->useDefChains[dependency];
+			//TODO: is this much recalculation needed to retrace definition?
+			useDefChain &varUseDefChain = this->useDefChains[target];
 			if (varUseDefChain.defs.empty()) { continue; }
+
 			size_t defTransitionIdx = varUseDefChain.defs[0];
 			//cout << this->transitions[defTransitionIdx] << endl;
 			petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-			this->super::insert_after(defTransitionIt, forkAssignmentTransition);
-			//TODO: RETVRN HERE (package this up into a helper call above, renameVarAtTransition,
-			//  including the renaming of all references after. We made the new name assignment, time to USE it lol
-			// (ugh, how do the more specialized post-fork child-copies respecticaly ONLY rename themselves
-			//  versus destructively all others? meh, it'll be obvious.)
+			petri::iterator forkAssignmentIt = this->super::insert_after(defTransitionIt, forkAssignmentTransition);
 
-
-			for (size_t copyCount = 0; copyCount < useCount; copyCount++) {
-				size_t varCopyIdx = this->getEnumeratedVar(dependency, copyCount, "_cp_");
+			size_t copyCount = 0;
+			for (auto varUse : varUseDefChain.uses) {
+				size_t varCopyIdx = this->getEnumeratedVar(target, copyCount, "_branch");
 				cout << "^%$ " << this->vars[varCopyIdx].name << endl;
 
-				//TODO: now insert the "x_cp_n := x_fork" copies AND rename their uses
-				//chp::transition
-				//this->super::insert_after();
+				// Insert the "x_cp_n := x_fork" copies
+				arithmetic::Action branchAssignment;
+				branchAssignment.lvalue = arithmetic::Expression::varOf(varCopyIdx);
+				branchAssignment.rvalue = arithmetic::Expression::varOf(varForkIdx);
+				chp::transition branchReassignmentTransition(
+					arithmetic::Expression::vdd(), arithmetic::Choice({{branchAssignment}}));
+
+				petri::iterator branchReassignmentTransitionIt = this->super::insert_after(forkAssignmentIt, branchReassignmentTransition);
+
+				// Now overwrite this respective usage of x with its uniquely named copy: x_cp_n
+				//TODO: UGH! Fix all bugs due to Mapping<size_t> treating size_t() a.k.a. 0 as the undef value
+				Mapping<size_t> branchRename(std::numeric_limits<size_t>::max(), true);
+				branchRename.set(target, varCopyIdx);
+
+				chp::transition &branchUseTransition = this->transitions[varUse];
+				//TODO: replace all this->transitions lookups with this->at(t_idx) ?? nah, that's for special-purpose term_index
+				branchUseTransition.guard.applyVars(branchRename);
+
+				arithmetic::Choice &choice = branchUseTransition.action;
+				for (arithmetic::Parallel &term : choice.terms) {
+					for (arithmetic::Action &action : term.actions) {
+						action.rvalue.applyVars(branchRename);
+						//TODO: we actually need to branch on each individual usage INCLUDING multi-use in a single expression!
+					}
+				}
+				copyCount				++;  // cuz i can >:3
 			}
 		}
 		cout << endl;
@@ -1722,15 +1787,18 @@ void graph::project() {
 	//
 	// 3) Insert internal-communication channels
 	//
+	//TODO:
 
 	//
 	// 4) Build Projection Sets
 	//
 	unordered_map<size_t, vector<size_t>> projectionSets;
+	//TODO:
 
 	//
 	// 5) Project
 	//
+	//TODO:
 
 	cout << "projected." << endl;
 }
