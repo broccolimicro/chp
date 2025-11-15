@@ -200,8 +200,10 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
 	void renameVarAtTransition(size_t varIdx, size_t transitionIdx);
 
-	void project();
-	void decompose();
+	vector<graph> project();
+	vector<graph> decompose();
+
+	//string to_string(const arithmetic::Expression &e) const; //TODO: idea for pretty-printing WITH var names rendered, but I don't want to make dependency
 };
 
 }

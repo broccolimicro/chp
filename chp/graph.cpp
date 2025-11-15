@@ -17,6 +17,7 @@
 //TODO: nice. Now substitute them for readability [at least in graph::project()]
 typedef size_t TransitionIdx;
 typedef size_t VarIdx;
+
 using arithmetic::Expression;
 
 namespace chp
@@ -531,15 +532,16 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 	}
 }
 
-void graph::decompose() {  //chp::graph &g) {}
+vector<graph> graph::decompose() {  //chp::graph &g) {}
 	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
 	cout << endl << "\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
 	cout << ">>> " << this->name << endl;
 
 	this->convertToDSA();
-	this->project();
+	vector<graph> processes = this->project();
 
 	cout << "decomposed." << endl;
+	return processes;
 
 	// TODO Process Decomposition and Projection
 	//
@@ -1584,6 +1586,53 @@ vector<size_t> graph::findOutputChannelInExpression(const arithmetic::Expression
 	return {};
 }
 
+//string graph::to_string(const Expression &e) {
+//	//TODO: hoist arithmetic/algorithm.cpp::to_string() in here with the call from Expression::to_string(debug=true) to get variable pretty-printing done nicely
+//	std::ostringstream result;
+//	if (debug) {
+//		result << "top: " << top << endl;
+//		vector<Operand> idx = ops.exprIndex();
+//		for (auto i = idx.rbegin(); i != idx.rend(); i++) {
+//			result << *ops.getExpr(i->index) << endl;
+//		}
+//
+//	} else {
+//		index_vector<string> strs;
+//		for (ConstUpIterator i(ops, {top}); not i.done(); ++i) {
+//			Operator func = Operation::operators[i->func];
+//			std::ostringstream oss;
+//			oss << "(";
+//			oss << func.prefix;
+//			for (int j = 0; j < (int)i->operands.size(); j++) {
+//				if (i->operands[j].isExpr()) {
+//					oss << strs[i->operands[j].index];
+//				} else {
+//					oss << i->operands[j];
+//				}
+//				if (j == 0 and not func.trigger.empty()) {
+//					oss << func.trigger;
+//				} else if (j == (int)i->operands.size()-1) {
+//					oss << func.postfix;
+//				} else {
+//					oss << func.infix;
+//				}
+//			}
+//
+//			oss << ")";
+//			strs.emplace_at(i->op().index, oss.str());
+//		}
+//
+//		if (top.isExpr()) {
+//			result << strs[top.index];
+//		} else {
+//			result << top;
+//		}
+//	}
+//	return result.str();
+//
+//}
+
+
 //petri::iterator graph::splitVarUses() { }
 //petri::iterator graph::renameVarUseAferTransition(size_t insertionTransitionIdx, size_t preVar, size_t postVar) {
 //
@@ -1611,9 +1660,28 @@ vector<size_t> graph::findOutputChannelInExpression(const arithmetic::Expression
 //	return chain.defs[0];
 //}
 
+//enum struct ChannelType {
+//	NONE,
+//	SEND,
+//	RECV
+//};
+//
+//struct VarRef {
+//	size_t idx;
+//	ChannelType type;
+//	size_t channelIdx;
+//};
+
+//TODO: RETVRN HERE to disambiguate channels for pruning graph w/ Projection Sets
+struct Channel {
+	bool isSend;
+	bool isInternal;
+	VarIdx partner; //TODO: no, they'll share index or maybe they shouldn't. they shouldn't.
+};
+
 
 // Data-driven Decomposition
-void graph::project() {
+vector<graph> graph::project() {
 	cout << endl << "projecting." << endl;
 
 	// Index definitions & references per variable
@@ -1623,9 +1691,18 @@ void graph::project() {
 	//
 	// 1) Build Dependency Sets
 	//
+	//TODO: unordered_sets, obviously
 	unordered_map<VarIdx, vector<VarIdx>> dependencySets;  //TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets!
 	unordered_map<VarIdx, vector<VarIdx>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
 	set<VarIdx> inputChannels, outputChannels;
+
+	set<VarIdx> internalChannels;
+	unordered_map<VarIdx, vector<VarIdx>> channelSends;  // only internal channels
+	unordered_map<VarIdx, vector<VarIdx>> channelRecvs;  // only internal channels
+
+	bool isChannelMatch(VarIdx from, VarIdx to) {
+
+	}
 
 	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
 		petri::iterator t_it(transition::type, transitionIdx);
@@ -1660,6 +1737,7 @@ void graph::project() {
 					dependencySets[outputChannel].insert(dependencySets[outputChannel].begin(), rightVars.begin(), rightVars.end());
 					projectionSets[outputChannel].insert(projectionSets[outputChannel].begin(), rightVars.begin(), rightVars.end());
 					projectionSets[outputChannel].push_back(outputChannel);
+					//TODO: aha, these need to be overwritten with new variable
 
 				} else {
 					//TODO: what if lvalue is a larger expression than just 1 left-var on top? ...or "-x = 3"
@@ -1772,6 +1850,7 @@ void graph::project() {
 
 
 
+
 		// Insert "this.guard -> CHAN.send(x); x_fork := CHAN.recv()"
 		VarIdx forkChannelIdx = this->getEnumeratedVar(dependency, 0, "_FORK_CHAN");
 		//projectionSets[dependency].push_back(varForkIdx); //TODO: be careful of renamed x vs x_fork which I'm still ambiguous what I prefer, but I've already remapped everywhere to x_fork wherever appropriate
@@ -1787,7 +1866,8 @@ void graph::project() {
 		chp::transition forkSendTransition(guard, arithmetic::Choice({{forkSend}}));
 
 		petri::iterator forkSendTransitionIt = this->super::insert_after(defTransitionIt, forkSendTransition);
-		projectionSets[dependency].push_back(forkChannelIdx);  //TODO: but send-only! distinguish between channels in all these projectionSettings
+		projectionSets[dependency].push_back(forkChannelIdx);
+		channelSends[dependency].push_back(forkChannelIdx);
 
 
 		//TODO: make all other arithmetic::Action constructors more legible like this? ... ugh, now too dense, but still somewhat better (ah, use namespaces)
@@ -1800,9 +1880,16 @@ void graph::project() {
 		umbilicalCords.insert(umbilicalCordIt);
 		petri::iterator forkRecvTransitionIt = this->super::insert_after(umbilicalCordIt, forkRecvTransition);
 		//internalChannels[transitionIdx] = make_pair(forkSendTransitionIt.index, forkRecvTransitionIt.index);
-		projectionSets[varForkIdx].push_back(forkChannelIdx);  //TODO: but recv-only! distinguish between channels in all these projectionSettings
+		projectionSets[varForkIdx].push_back(forkChannelIdx);
+		channelRecvs[dependency].push_back(forkChannelIdx);
 
 
+
+		//TODO: SLOPPY HACK to get next transition as hook for spawning parallel branchs with the same source & target
+		//TODO: not even bound-checked. absolutely disgusting.
+		petri::iterator originalUmbilicalCordIt = this->next(forkRecvTransitionIt)[0];
+		petri::iterator branchTargetTransitionIt = this->next(originalUmbilicalCordIt)[0];
+		//TODO: yikes, this structural decision probably isn't needed. I imagine a recv with multiple parallel outs doesn't fit into this fork. I only considered the next transition, back to the documented approach.
 
 		size_t copyCount = 0;
 		for (VarIdx user : users) {
@@ -1857,10 +1944,18 @@ void graph::project() {
 					arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
 			//TODO: certainly not, but quadruple-check that there isn't a guard worth preserving here. Definitely not, but I'm sleepy & prefer over-documenting assumptions
 
+
+			// Create a new branch off the fork
+			size_t branchHeadIdx = this->places.emplace(chp::place());
+			petri::iterator branchHeadIt(petri::place::type, branchHeadIdx);
+			this->super::connect(forkRecvTransitionIt, branchHeadIt);
+
+
 			cout << endl << "++ " << channelIdx << endl;
 			cout << "++ +  +> " << channelSendExpr << endl;
-			petri::iterator branchSendTransitionIt = this->super::insert_after(forkRecvTransitionIt, branchSendTransition);
-			projectionSets[varForkIdx].push_back(channelIdx);  //TODO: classify channel send
+			petri::iterator branchSendTransitionIt = this->super::insert_after(branchHeadIt, branchSendTransition);
+			projectionSets[varForkIdx].push_back(channelIdx);
+			channelSends[varForkIdx].push_back(channelIdx);
 
 
 			arithmetic::Action usageRecv;
@@ -1876,11 +1971,12 @@ void graph::project() {
 
 			cout << "++ +  <+ " << channelRecvExpr << endl;
 
-			petri::iterator umbilicalCordIt = this->super::insert_after(branchSendTransitionIt, chp::transition());
-			umbilicalCords.insert(umbilicalCordIt);
-			petri::iterator branchRecvTransitionIt = this->super::insert_after(umbilicalCordIt, branchRecvTransition);
+			petri::iterator branchRecvTransitionIt = this->super::insert_after(branchSendTransitionIt, branchRecvTransition);
+			petri::iterator branchTailIt = this->next(branchRecvTransitionIt)[0];
+			this->super::connect(branchTailIt, branchTargetTransitionIt);
 			//internalChannels[transitionIdx] = make_pair(branchSendTransitionIt.index, branchRecvTransitionIt.index);
-			projectionSets[user].push_back(channelIdx);  //TODO: classify channel recv
+			projectionSets[user].push_back(channelIdx);
+			channelRecvs[user].push_back(channelIdx);
 
 
 
@@ -1888,6 +1984,11 @@ void graph::project() {
 			Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
 			usageRename.set(dependency, varUsageIdx);
 			//TODO: or is it fork-instead-of-dependency that needs to be replaced? triple-check
+			for (VarIdx user : users) {
+				vector<VarIdx> &p = projectionSets[user];
+				p.erase(std::remove(p.begin(), p.end(), dependency), p.end());
+				p.push_back(varUsageIdx);
+			}
 
 			////useDefChain &userUseDefChain = this->useDefChains[user];
 			////if (userUseDefChain.defs.empty()) { continue; }  //TODO: necessary? Is this the right way or can I just use uses[-]
@@ -1908,6 +2009,8 @@ void graph::project() {
 
 			copyCount++;
 		}
+
+		this->super::erase(originalUmbilicalCordIt);
 		cout << endl;
 	}
 
@@ -2027,7 +2130,8 @@ void graph::project() {
 		cout << endl << "++ " << channelIdx << endl;
 		cout << "++ +  +> " << channelSendExpr << endl;
 		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
-		projectionSets[dependency].push_back(channelIdx);  //TODO: classify channel send
+		projectionSets[dependency].push_back(channelIdx);
+		channelSends[dependency].push_back(channelIdx);
 
 
 		arithmetic::Action usageRecv;
@@ -2047,12 +2151,18 @@ void graph::project() {
 		umbilicalCords.insert(umbilicalCordIt);
 		petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
 		//internalChannels[transitionIdx] = make_pair(internalSendTransitionIt.index, internalRecvTransitionIt.index);
-		projectionSets[user].push_back(channelIdx);  //TODO: classify channel recv
+		projectionSets[user].push_back(channelIdx);
+		channelRecvs[user].push_back(channelIdx);
 
 
 		// Substitute "x_usage_n" for x in usage
 		Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
 		usageRename.set(dependency, varUsageIdx);
+		for (VarIdx user : users) {
+			vector<VarIdx> &p = projectionSets[user];
+			p.erase(std::remove(p.begin(), p.end(), dependency), p.end());
+			p.push_back(varUsageIdx);
+		}
 
 		//useDefChain &userUseDefChain = this->useDefChains[user];
 		////TODO: oops, this below filters out channels (
@@ -2067,27 +2177,38 @@ void graph::project() {
 			for (arithmetic::Parallel &term : choice.terms) {
 				for (arithmetic::Action &action : term.actions) {
 					action.rvalue.applyVars(usageRename);
-					//TODO: what if there are multiple uses of the same variable within this assignment?
+					//TODO: what if there are multiple uses of the same variable within this assignment? seems less an issue the more I consider it
 				}
 			}
 		}
 	}
 
 	//TODO: very fun, but the snip is not the right approach, the Projection Sets help us white-list what to pick
-	for (petri::iterator umbilicalCord : umbilicalCords) {
-		//this->super::erase(umbilicalCord);
-	}
+	//for (petri::iterator umbilicalCord : umbilicalCords) {
+	//	this->super::erase(umbilicalCord);
+	//}
 
 
 
 	//
 	// 4) Build Projection Sets
 	//
-	cout << endl << "  # ## ###  <PS> ### ## #  " << endl;
-	//for (const auto& [k, v] : projectionSets) { cout << "  <( " << this->vars[k].name << " )> " << endl; }
-	std::for_each(projectionSets.begin(), projectionSets.end(), [this](auto &dep) {
+	cout << endl << "  # ## ### < PS> ### ## #  " << endl;
+
+	std::for_each(projectionSets.begin(), projectionSets.end(), [this, &channelSends, &channelRecvs, &inputChannels, &outputChannels](auto &dep) {
 			cout << "  <( " << this->vars[dep.first].name << " )>  ";
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "),
+					[this, &channelSends, &channelRecvs, &dep, &inputChannels, &outputChannels](VarIdx varIdx) {
+						vector<VarIdx> &intRecvs = channelRecvs[dep.first];
+						vector<VarIdx> &intSends = channelSends[dep.first];
+						set<VarIdx> &extRecvs = inputChannels;
+						set<VarIdx> &extSends = outputChannels;
+						bool isInternalChannelRecv = std::find(intRecvs.begin(), intRecvs.end(), varIdx) != intRecvs.end();
+						bool isInternalChannelSend = std::find(intSends.begin(), intSends.end(), varIdx) != intSends.end();
+						bool isExternalChannelRecv = extRecvs.contains(varIdx);
+						bool isExternalChannelSend = extSends.contains(varIdx);
+						return this->vars[varIdx].name + (isInternalChannelSend ? "!" : (isInternalChannelRecv ? "?" : "")) + (isExternalChannelSend ? "!" : (isExternalChannelRecv ? "?" : ""));
+					});
 			cout << endl;
 			});
 	cout << "  # ## ### </PS> ### ## #  " << endl;
@@ -2096,9 +2217,80 @@ void graph::project() {
 	//
 	// 5) Project
 	//
-	//TODO:
+	vector<chp::graph> processes; //(projectionSets.size(), *this);
+	
+	size_t pid = 0;
+	for (const auto& [var, components] : projectionSets) {
+		chp::graph process = *this;
+		process.name += + "_" + this->vars[var].name;
+		vector<TransitionIdx> toDelete;
+		set<TransitionIdx> projectedComponents(components.begin(), components.end());
+		//TODO: RETVRN HERE ah, make sure to get send vs recv & internal vs external right
+		//TODO: convert this into a helper
+
+		// Find transitions of a duplicate chp::graph that don't contain any projected component
+		for (TransitionIdx transitionIdx = 0; transitionIdx < process.transitions.size(); transitionIdx++) {
+			const chp::transition &transition = process.transitions[transitionIdx];
+			bool componentFound = false;
+
+			// First, check the guard
+			vector<VarIdx> guardVars = this->getVarsFromExpression(transition.guard);
+			for (VarIdx var : guardVars) {
+				for (VarIdx component : projectedComponents) {
+					if (var == component && ) { //TODO: RETVRN HERE don't let directional-channel false-positives through
+						componentFound = true;
+						break;
+					}
+				}
+				if (componentFound) { break; }
+				}
+			}
+			if (componentFound) { continue; }
+
+			const arithmetic::Choice &action = transition.action;
+			for (const arithmetic::Parallel &term : action.terms) {
+				for (const arithmetic::Action &action : term.actions) {
+
+					// Second, check the LHS of a potential assignment
+					vector<VarIdx> leftVars = this->getVarsFromExpression(action.lvalue);
+					if (not leftVars.empty()) {
+						for (VarIdx var : leftVars) {
+							if (projectedComponents.count(var)) {
+								componentFound = true;
+								break;
+							}
+						}
+						if (componentFound) { break; }
+					}
+
+					// Third, check the body of the statement
+					vector<VarIdx> rightVars = this->getVarsFromExpression(action.rvalue);
+					for (VarIdx var : rightVars) {
+						if (projectedComponents.count(var)) {
+							componentFound = true;
+							break;
+						}
+					}
+				}
+				if (componentFound) { break; }
+			}
+			if (componentFound) { continue; }
+
+			toDelete.push_back(transitionIdx);
+		}
+
+		// Prunce components outside the projection
+		for (TransitionIdx transitionIdx : toDelete) {
+			petri::iterator irrelevantTransitionIt(petri::transition::type, transitionIdx);
+			process.super::pinch(irrelevantTransitionIt);
+		}
+
+		processes.push_back(process);
+		pid++;
+	}
 
 	cout << "projected." << endl;
+	return processes;
 }
 
 }
