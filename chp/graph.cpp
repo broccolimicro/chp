@@ -17,6 +17,7 @@
 //TODO: nice. Now substitute them for readability [at least in graph::project()]
 typedef size_t TransitionIdx;
 typedef size_t VarIdx;
+using arithmetic::Expression;
 
 namespace chp
 {
@@ -1218,12 +1219,12 @@ void graph::setUseDef(size_t chp_var_idx, size_t transition_idx, bool is_definit
 	if (is_definition) {
 		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
 		//this->defs[chp_var_name].push_back(transition_idx);
-		cout << "DEF _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+		cout << "DEF " << chp_var_name << " @ " << transition_idx << endl;
 
 	} else {
 		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
 		//this->uses[chp_var_name].push_back(transition_idx);
-		cout << "USE _,.=~-^*'\"`\\r-=>" << chp_var_name << " @" << transition_idx << endl;
+		cout << "use " << chp_var_name << " @ " << transition_idx << endl;
 	}
 }
 
@@ -1615,6 +1616,10 @@ vector<size_t> graph::findOutputChannelInExpression(const arithmetic::Expression
 void graph::project() {
 	cout << endl << "projecting." << endl;
 
+	// Index definitions & references per variable
+	this->computeUseDefChains();
+	cout << endl;
+
 	//
 	// 1) Build Dependency Sets
 	//
@@ -1735,47 +1740,73 @@ void graph::project() {
 			cout << endl;
 			});
 
-	// Identify multi-use variables that need to fork into branching copies
-	//for (auto const &[dependency, useCount] : dependencyUseCounter) {
-	//TODO: rename "targt, dependencies" now that it's an INVERTED dependency set. More like "dependency, users"
+	// Identify multi-use variables that need a copy process to fork their dataflow
 	for (auto const &[dependency, users] : invertedDependencySet) {
-		size_t useCount = users.size();   //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
+		size_t useCount = users.size();
 		//cout << " __ " << this->vars[dependency].name << ": " << useCount
 		//	<< ((useCount > 1) ? "!" : "") << endl;
 		if (useCount < 2) { continue; }
 
-		//TODO: RETVRN HERE (package this up into a helper call above, renameVarAtTransition,
-		//  including the renaming of all references after. We made the new name assignment, time to USE it lol
-		// (ugh, how do the more specialized post-fork child-copies respecticaly ONLY rename themselves
-		//  versus destructively all others? meh, it'll be obvious.)
-		//TODO: just drop the helper here: this->splitVarUses(x);
+		//// Insert new "x_fork := x;" copy-assignment immediately after x assignment
+		//// This serves as the base of a fork, splitting/parallelizing out to every use/reference
+		VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork");
+		projectionSets[varForkIdx].push_back(varForkIdx);
 
-			//TODO: haha prune this section: now "x_fork := x" assignment is redundant [after multi-dep internal-commmunication channel insertion]! 
-		// Insert new "x_fork := x;" copy-assignment immediately after x assignment
-		// This serves as the base of a fork, splitting/parallelizing out to every use/reference
-		size_t varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork");
-		arithmetic::Action forkAssignment;
-		forkAssignment.lvalue = arithmetic::Expression::varOf(varForkIdx);
-		forkAssignment.rvalue = arithmetic::Expression::varOf(dependency);
+		//arithmetic::Action forkAssignment;
+		//forkAssignment.lvalue = arithmetic::Expression::varOf(varForkIdx);
+		//forkAssignment.rvalue = arithmetic::Expression::varOf(dependency);
+		//chp::transition forkAssignmentTransition(
+		//		arithmetic::Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
+		////size_t forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
+		////petri::iterator forkIt(petri::transition::type, forkTransitionIdx);
 
-		chp::transition forkAssignmentTransition(
-				arithmetic::Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
-		//size_t forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
-		//petri::iterator forkIt(petri::transition::type, forkTransitionIdx);
-
-		//TODO: is this much recalculation needed to retrace definition?
+		////TODO: is this much recalculation needed to retrace definition?
 		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
 		if (dependencyUseDefChain.defs.empty()) { continue; }
 
 		size_t defTransitionIdx = dependencyUseDefChain.defs[0];
-		//cout << this->transitions[defTransitionIdx] << endl;
+		////cout << this->transitions[defTransitionIdx] << endl;
 		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-		petri::iterator forkAssignmentIt = this->super::insert_after(defTransitionIt, forkAssignmentTransition);
-		//TODO: append useDef after inserting new assignment? nah
-		//TODO: immediately insert internal-communication channel?
+		//petri::iterator forkAssignmentIt = this->super::insert_after(defTransitionIt, forkAssignmentTransition);
+		////TODO: append useDef after inserting new assignment? nah
+
+
+
+		// Insert "this.guard -> CHAN.send(x); x_fork := CHAN.recv()"
+		VarIdx forkChannelIdx = this->getEnumeratedVar(dependency, 0, "_FORK_CHAN");
+		//projectionSets[dependency].push_back(varForkIdx); //TODO: be careful of renamed x vs x_fork which I'm still ambiguous what I prefer, but I've already remapped everywhere to x_fork wherever appropriate
+		cout << endl << "++ " << forkChannelIdx << endl;
+
+		Expression channelSendExpr = arithmetic::call(
+				"send",
+				{Expression::varOf(forkChannelIdx), Expression::varOf(dependency)} //nope, varForkIdx//TODO: nope, now... dependency//varForkIdx
+				);
+		cout << "++ +  +> " << channelSendExpr << endl;
+		arithmetic::Action forkSend(Expression::undef(), channelSendExpr);
+		Expression guard = this->transitions[defTransitionIdx].guard;
+		chp::transition forkSendTransition(guard, arithmetic::Choice({{forkSend}}));
+
+		petri::iterator forkSendTransitionIt = this->super::insert_after(defTransitionIt, forkSendTransition);
+		projectionSets[dependency].push_back(forkChannelIdx);  //TODO: but send-only! distinguish between channels in all these projectionSettings
+
+
+		//TODO: make all other arithmetic::Action constructors more legible like this? ... ugh, now too dense, but still somewhat better (ah, use namespaces)
+		Expression channelRecvExpr = arithmetic::call("recv", {Expression::varOf(forkChannelIdx)});
+		cout << "++ +  <+ " << channelRecvExpr << endl;
+		arithmetic::Action forkRecv(Expression::varOf(varForkIdx), channelRecvExpr);
+		chp::transition forkRecvTransition(Expression::vdd(), arithmetic::Choice({{forkRecv}}));
+
+		petri::iterator umbilicalCordIt = this->super::insert_after(forkSendTransitionIt, chp::transition());
+		umbilicalCords.insert(umbilicalCordIt);
+		petri::iterator forkRecvTransitionIt = this->super::insert_after(umbilicalCordIt, forkRecvTransition);
+		//internalChannels[transitionIdx] = make_pair(forkSendTransitionIt.index, forkRecvTransitionIt.index);
+		projectionSets[varForkIdx].push_back(forkChannelIdx);  //TODO: but recv-only! distinguish between channels in all these projectionSettings
+
+
 
 		size_t copyCount = 0;
-		for (TransitionIdx dependencyUseTransition : dependencyUseDefChain.uses) {
+		for (VarIdx user : users) {
+			//for (TransitionIdx dependencyUseTransition : dependencyUseDefChain.uses)
 			//VarIdx varCopyIdx = this->getEnumeratedVar(dependency, copyCount, "_branch");
 			//cout << "^%$ " << this->vars[varCopyIdx].name << endl;
 
@@ -1788,10 +1819,7 @@ void graph::project() {
 
 			//petri::iterator branchReassignmentTransitionIt = this->super::insert_after(forkAssignmentIt, branchReassignmentTransition);
 			////TODO: append useDef after inserting new assignment? nah
-			////TODO: immediately insert internal-communication channel?
 
-			//// Now overwrite this respective usage of x with its uniquely named copy: x_cp_n
-			////TODO: UGH! Fix all bugs due to Mapping<size_t> treating size_t() a.k.a. 0 as the undef value
 			//Mapping<size_t> branchRename(std::numeric_limits<size_t>::max(), true);
 			//branchRename.set(dependency, varCopyIdx);
 
@@ -1809,30 +1837,30 @@ void graph::project() {
 
 
 
-			//TODO: haha now "x_fork := x" assignment is redundant! Replace use of `x_fork` with x more directly now
 			// Insert "CHAN.send(x_fork); x_usage_n = CHAN.recv()" internal-communication channels in-place of assignment
 			cout << endl << "\\/\\/\\/\\/\\/ multi-dep" << endl;
 			//useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
 			//if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
 			//TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
 			//petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-			VarIdx channelIdx = this->getEnumeratedVar(dependency, copyCount, "_COPY_CHAN");
+			VarIdx channelIdx = this->getEnumeratedVar(dependency, copyCount, "_BRANCH_CHAN");
 
 
 			arithmetic::Action usageSend;
 			arithmetic::Expression channelSendExpr = arithmetic::call(
 					"send",
-					{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(varForkIdx)} //TODO: nope, now... dependency)}//varForkIdx)}
+					{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(varForkIdx)}
 					);
 			usageSend.lvalue = arithmetic::Expression::undef();
 			usageSend.rvalue = channelSendExpr;
-			chp::transition internalSendTransition(
+			chp::transition branchSendTransition(
 					arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
 			//TODO: certainly not, but quadruple-check that there isn't a guard worth preserving here. Definitely not, but I'm sleepy & prefer over-documenting assumptions
 
 			cout << endl << "++ " << channelIdx << endl;
 			cout << "++ +  +> " << channelSendExpr << endl;
-			petri::iterator internalSendTransitionIt = this->super::insert_after(forkAssignmentIt, internalSendTransition);
+			petri::iterator branchSendTransitionIt = this->super::insert_after(forkRecvTransitionIt, branchSendTransition);
+			projectionSets[varForkIdx].push_back(channelIdx);  //TODO: classify channel send
 
 
 			arithmetic::Action usageRecv;
@@ -1840,18 +1868,19 @@ void graph::project() {
 					"recv",
 					{arithmetic::Expression::varOf(channelIdx)}
 					);
-			VarIdx varUsageIdx = this->getEnumeratedVar(dependency, copyCount, "_copy");
+			VarIdx varUsageIdx = this->getEnumeratedVar(dependency, copyCount, "_branch");
 			usageRecv.lvalue = arithmetic::Expression::varOf(varUsageIdx);
 			usageRecv.rvalue = channelRecvExpr;
-			chp::transition internalRecvTransition(
+			chp::transition branchRecvTransition(
 					arithmetic::Expression::vdd(), arithmetic::Choice({{usageRecv}}));
 
 			cout << "++ +  <+ " << channelRecvExpr << endl;
 
-			petri::iterator umbilicalCordIt = this->super::insert_after(internalSendTransitionIt, chp::transition());
+			petri::iterator umbilicalCordIt = this->super::insert_after(branchSendTransitionIt, chp::transition());
 			umbilicalCords.insert(umbilicalCordIt);
-			petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
-			//internalChannels[transitionIdx] = make_pair(internalSendTransitionIt.index, internalRecvTransitionIt.index);
+			petri::iterator branchRecvTransitionIt = this->super::insert_after(umbilicalCordIt, branchRecvTransition);
+			//internalChannels[transitionIdx] = make_pair(branchSendTransitionIt.index, branchRecvTransitionIt.index);
+			projectionSets[user].push_back(channelIdx);  //TODO: classify channel recv
 
 
 
@@ -1876,8 +1905,6 @@ void graph::project() {
 					}
 				}
 			}
-
-
 
 			copyCount++;
 		}
@@ -1981,6 +2008,7 @@ void graph::project() {
 		cout << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ single-dep R7->8" << endl;
 		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
 		if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
+
 		TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
 		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
 		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "_LONE_CHAN");
@@ -1994,7 +2022,7 @@ void graph::project() {
 		usageSend.lvalue = arithmetic::Expression::undef();
 		usageSend.rvalue = channelSendExpr;
 		chp::transition internalSendTransition(
-			arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
+				arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
 
 		cout << endl << "++ " << channelIdx << endl;
 		cout << "++ +  +> " << channelSendExpr << endl;
@@ -2029,7 +2057,7 @@ void graph::project() {
 		//if (userUseDefChain.defs.empty()) { continue; }  //TODO: necessary? Is this the right way or can I just use uses[-]
 		//TransitionIdx usageTransitionIdx = this->useDefChains[user].defs[0];
 		if (dependencyUseDefChain.uses.empty()) { continue; }
-		for (TransitionIdx use : dependencyUseDefChain.uses) {
+		for (TransitionIdx use : dependencyUseDefChain.uses) { //TODO: shouldn't this always be .size()==1? It's a lone var? Maybe used in guard of a non-assignment!
 			chp::transition &usageTransition = this->transitions[use]; //usageTransitionIdx];
 			usageTransition.guard.applyVars(usageRename);
 
