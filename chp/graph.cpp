@@ -1026,7 +1026,7 @@ bool graph::isFlat() const {
 arithmetic::Expression graph::exclusion(int index) const {
 	arithmetic::Expression result;
 	vector<int> p = prev(transition::type, index);
-	
+
 	for (int i = 0; i < (int)p.size(); i++) {
 		vector<int> n = next(place::type, p[i]);
 		if (n.size() > 1) {
@@ -1618,63 +1618,67 @@ void graph::project() {
 	//
 	// 1) Build Dependency Sets
 	//
-	unordered_map<size_t, vector<size_t>> dependencySets;  //TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets!
+	unordered_map<VarIdx, vector<VarIdx>> dependencySets;  //TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets!
+	unordered_map<VarIdx, vector<VarIdx>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
+	set<VarIdx> inputChannels, outputChannels;
 
-	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
-		petri::iterator t_it(transition::type, transition_idx);
+	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
+		petri::iterator t_it(transition::type, transitionIdx);
 		if (not this->is_valid(t_it)) { continue; }
 
 		// Extract Dependency Set from transition, if there is any
-		const chp::transition &tran = this->transitions[transition_idx];
-		vector<size_t> guardVars = this->getVarsFromExpression(tran.guard);
+		const chp::transition &tran = this->transitions[transitionIdx];
+		vector<VarIdx> guardVars = this->getVarsFromExpression(tran.guard);
 
 		const arithmetic::Choice &action = tran.action;
 		for (const auto &term : action.terms) {
 			for (const auto &action : term.actions) {
-				vector<size_t> leftVars = this->getVarsFromExpression(action.lvalue);
+				vector<VarIdx> leftVars = this->getVarsFromExpression(action.lvalue);
 
 				//TODO: is_definition parameter could be more robust ":=" assignment operand matching
-				vector<size_t> rightVars = this->getVarsFromExpression(action.rvalue);
+				vector<VarIdx> rightVars = this->getVarsFromExpression(action.rvalue);
 
 				// If not assignment, check for output-channel (a.k.a. "send()") which is assignment-ish
 				//TODO: there must be a better way to pre-index not just channels vs vars DURING synthesis but beforehand
 				//  AND it should somehow index the partition between input vs output channels (perhaps, in-only, out-only, and bi-use'd?)
 				//  within "bi-used" we can separate "internal-communication only" channels vs bi-used chans w/ external side-effects/dependencies
 				if (leftVars.empty()) {
-					vector<size_t> outputChannels = this->findOutputChannelInExpression(action.rvalue);
-					if (outputChannels.empty()) { continue; }
+					vector<VarIdx> outputChannelsUsed = this->findOutputChannelInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
+					if (outputChannelsUsed.empty()) { continue; }
 
-					size_t outputChannel = outputChannels[0];
-					cout << " chan[" << this->vars[outputChannel].name << "]" << endl;
+					VarIdx outputChannel = outputChannelsUsed[0];
+					outputChannels.insert(outputChannel);
+					cout << " ! CHAN<" << this->vars[outputChannel].name << ">" << endl;
 
 					// Prune redundant self from right-hand side
-					rightVars.erase(rightVars.begin());  //TODO: optimize this expensive operation
-					dependencySets[outputChannel] = rightVars;
+					rightVars.erase(std::remove(rightVars.begin(), rightVars.end(), outputChannel), rightVars.end());
+					dependencySets[outputChannel].insert(dependencySets[outputChannel].begin(), rightVars.begin(), rightVars.end());
+					projectionSets[outputChannel].insert(projectionSets[outputChannel].begin(), rightVars.begin(), rightVars.end());
+					projectionSets[outputChannel].push_back(outputChannel);
 
 				} else {
 					//TODO: what if lvalue is a larger expression than just 1 left-var on top? ...or "-x = 3"
 					// Assume for now, left-hand is always direct single-assignment
-					dependencySets[leftVars[0]] = rightVars;
+					VarIdx assignedVar = leftVars[0];
+					dependencySets[assignedVar].insert(dependencySets[assignedVar].begin(), rightVars.begin(), rightVars.end());
+					projectionSets[assignedVar].insert(projectionSets[assignedVar].begin(), rightVars.begin(), rightVars.end());
+					projectionSets[assignedVar].push_back(assignedVar);
 				}
 			}
 		}
 	}
 
-	cout << " ~~> ~~> ~~> " << endl;
-	std::for_each(dependencySets.begin(), dependencySets.end(), [this](auto &dep) {
-			cout << this->vars[dep.first].name << " <- ";
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
-			cout << endl;
-			});
+	//TODO: find less sloppy opportunity to index external input-channels
+	// Deduce external input-channels via existence in DependencySets values but not keys
+	for (auto const &[target, dependencies] : dependencySets) {
+		for (VarIdx dependency : dependencies) {
+			if (not dependencySets.contains(dependency)) {
+				inputChannels.insert(dependency);
+				cout << " ? CHAN<" << this->vars[dependency].name << ">" << endl;
+			}
+		}
+	}
 
-	//TODO: verify Dependency Sets & ensure only channel-Sends are included
-	//TODO: this is a great test suite to write
-	cout << " ~> ~> ~> ";
-	for (auto &[varIdx,v] : dependencySets) { cout << this->vars[varIdx].name << " "; }
-	cout << endl;
-
-	// Index definitions & references per variable
-	this->computeUseDefChains();
 	//TODO: umm, hwat? what was I trying with this transformation? Ahh, was this the previous, independent rendering of dependencySets?
 	//for (auto &[aVarIdx, aUseDefChain] : this->useDefChains) {
 	//	for (auto &[bVarIdx, bUseDefChain] : this->useDefChains) {
@@ -1688,6 +1692,19 @@ void graph::project() {
 	//}
 
 	//TODO: print & dehug/verify useDefChains again
+	cout << " ~~> ~~> ~~> " << endl;
+	std::for_each(dependencySets.begin(), dependencySets.end(), [this](auto &dep) {
+			cout << this->vars[dep.first].name << " <- ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
+			cout << endl;
+			});
+
+	//TODO: verify Dependency Sets & ensure only channel-Sends are included
+	//TODO: this is a great test suite to write
+	cout << " ~> ~> ~> ";
+	for (auto &[varIdx,v] : dependencySets) { cout << this->vars[varIdx].name << " "; }
+	cout << endl;
+
 
 	//
 	// 2) Insert copy variables
@@ -1723,8 +1740,8 @@ void graph::project() {
 	//TODO: rename "targt, dependencies" now that it's an INVERTED dependency set. More like "dependency, users"
 	for (auto const &[dependency, users] : invertedDependencySet) {
 		size_t useCount = users.size();   //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
-		cout << " __ " << this->vars[dependency].name << ": " << useCount
-			<< ((useCount > 1) ? "!" : "") << endl;
+		//cout << " __ " << this->vars[dependency].name << ": " << useCount
+		//	<< ((useCount > 1) ? "!" : "") << endl;
 		if (useCount < 2) { continue; }
 
 		//TODO: RETVRN HERE (package this up into a helper call above, renameVarAtTransition,
