@@ -770,7 +770,7 @@ void graph::flatten(bool debug) {
 	for (const auto &[split_place, out_neighbors] : monopartite_split_projection) {
 		size_t out_degree = out_neighbors.size();
 
-		if (out_degree > greatest_out_degree 
+		if (out_degree > greatest_out_degree
 				|| (out_degree == greatest_out_degree && split_place.index < most_dominant_split_place)) {
 			greatest_out_degree = out_degree;
 			most_dominant_split_place = split_place.index;
@@ -971,7 +971,7 @@ void graph::flatten(bool debug) {
 			cerr << "ERROR: Unable to unzip to dominator" << endl;
 			break;
 		}  //TODO: HACK: detect divergent runaway bug
-		//if (next == start) { 
+		//if (next == start) {
 		//	if (debug) {
 		//		cerr << "ERROR: Unable to unzip to dominator" << endl;
 		//	}
@@ -1893,16 +1893,16 @@ void graph::project() {
 			////if (userUseDefChain.defs.empty()) { continue; }  //TODO: necessary? Is this the right way or can I just use uses[-]
 			//TransitionIdx usageTransitionIdx = this->useDefChains[user].defs[0];
 			if (dependencyUseDefChain.uses.empty()) { continue; }
-			for (TransitionIdx use : dependencyUseDefChain.uses) {
-				chp::transition &usageTransition = this->transitions[use]; //usageTransitionIdx];
-				usageTransition.guard.applyVars(usageRename);
+			TransitionIdx use = dependencyUseDefChain.uses[copyCount];  //TODO: sloppy, is this the same branch ordering? I suspect not. This feels like it should do a lookup on the invertedDependency user's definition
+			//for (TransitionIdx use : dependencyUseDefChain.uses)
+			chp::transition &usageTransition = this->transitions[use]; //usageTransitionIdx
+			usageTransition.guard.applyVars(usageRename);
 
-				arithmetic::Choice &choice = usageTransition.action;
-				for (arithmetic::Parallel &term : choice.terms) {
-					for (arithmetic::Action &action : term.actions) {
-						action.rvalue.applyVars(usageRename);
-						//TODO: what if there are multiple uses of the same variable within this assignment?
-					}
+			arithmetic::Choice &choice = usageTransition.action;
+			for (arithmetic::Parallel &term : choice.terms) {
+				for (arithmetic::Action &action : term.actions) {
+					action.rvalue.applyVars(usageRename);
+					//TODO: what if there are multiple uses of the same variable within this assignment?
 				}
 			}
 
@@ -2027,6 +2027,7 @@ void graph::project() {
 		cout << endl << "++ " << channelIdx << endl;
 		cout << "++ +  +> " << channelSendExpr << endl;
 		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
+		projectionSets[dependency].push_back(channelIdx);  //TODO: classify channel send
 
 
 		arithmetic::Action usageRecv;
@@ -2046,6 +2047,7 @@ void graph::project() {
 		umbilicalCords.insert(umbilicalCordIt);
 		petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
 		//internalChannels[transitionIdx] = make_pair(internalSendTransitionIt.index, internalRecvTransitionIt.index);
+		projectionSets[user].push_back(channelIdx);  //TODO: classify channel recv
 
 
 		// Substitute "x_usage_n" for x in usage
@@ -2071,9 +2073,9 @@ void graph::project() {
 		}
 	}
 
-	//TODO: the snip is not the right approach, the Projection Sets help us white-list what to pick
+	//TODO: very fun, but the snip is not the right approach, the Projection Sets help us white-list what to pick
 	for (petri::iterator umbilicalCord : umbilicalCords) {
-		this->super::erase(umbilicalCord);
+		//this->super::erase(umbilicalCord);
 	}
 
 
@@ -2081,8 +2083,15 @@ void graph::project() {
 	//
 	// 4) Build Projection Sets
 	//
-	//unordered_map<size_t, vector<size_t>> projectionSets;
-	//TODO:
+	cout << endl << "  # ## ###  <PS> ### ## #  " << endl;
+	//for (const auto& [k, v] : projectionSets) { cout << "  <( " << this->vars[k].name << " )> " << endl; }
+	std::for_each(projectionSets.begin(), projectionSets.end(), [this](auto &dep) {
+			cout << "  <( " << this->vars[dep.first].name << " )>  ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
+			cout << endl;
+			});
+	cout << "  # ## ### </PS> ### ## #  " << endl;
+
 
 	//
 	// 5) Project

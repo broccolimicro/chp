@@ -159,7 +159,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 		size_t uid;
 		set<size_t> ins;
 		set<size_t> outs;
-		petri::iterator first; 
+		petri::iterator first;
 		petri::iterator last;  //TODO: delete first+last? redundant with transitions vector
 		vector<petri::iterator> transitions;
 		unordered_map<size_t, size_t> gens;  // transition_idx of def -> var defined
