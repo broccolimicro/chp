@@ -1680,6 +1680,8 @@ struct Channel {
 };
 
 
+//bool isChannelMatch(VarIdx from, VarIdx to)
+
 // Data-driven Decomposition
 vector<graph> graph::project() {
 	cout << endl << "projecting." << endl;
@@ -1699,10 +1701,6 @@ vector<graph> graph::project() {
 	set<VarIdx> internalChannels;
 	unordered_map<VarIdx, vector<VarIdx>> channelSends;  // only internal channels
 	unordered_map<VarIdx, vector<VarIdx>> channelRecvs;  // only internal channels
-
-	bool isChannelMatch(VarIdx from, VarIdx to) {
-
-	}
 
 	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
 		petri::iterator t_it(transition::type, transitionIdx);
@@ -2236,14 +2234,13 @@ vector<graph> graph::project() {
 			// First, check the guard
 			vector<VarIdx> guardVars = this->getVarsFromExpression(transition.guard);
 			for (VarIdx var : guardVars) {
-				for (VarIdx component : projectedComponents) {
-					if (var == component && ) { //TODO: RETVRN HERE don't let directional-channel false-positives through
+				for (VarIdx component : projectedComponents) { //TODO: trying to more exactly compare channels
+					if (var == component) { //????TODO: RETVRN HERE don't let directional-channel false-positives through
 						componentFound = true;
 						break;
 					}
 				}
 				if (componentFound) { break; }
-				}
 			}
 			if (componentFound) { continue; }
 
