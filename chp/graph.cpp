@@ -14,9 +14,9 @@
 #include <algorithm>
 #include <interpret_chp/export_dot.h>
 
-//TODO: nice. Now substitute them for readability [at least in graph::project()]
-typedef size_t TransitionIdx;
-typedef size_t VarIdx;
+//TODO: nice. Now substitute them for readability [at least in graph::project()]. added to header.
+//typedef size_t TransitionIdx;
+//typedef size_t VarIdx;
 
 using arithmetic::Expression;
 
@@ -1550,7 +1550,7 @@ void graph::convertToDSA() {
 	cout << "DSA'd." << endl;
 }
 
-vector<size_t> graph::getVarsFromExpression(const arithmetic::Expression &e) {
+vector<size_t> getVarsFromExpression(const arithmetic::Expression &e) {
 	if (e.isUndef()) { return {}; }
 	if (e.top.isVar() && e.size() == 0) { return {e.top.index}; }
 
@@ -1571,7 +1571,7 @@ vector<size_t> graph::getVarsFromExpression(const arithmetic::Expression &e) {
 }
 
 //TODO: Clean up this sloppy algorithmic solution. No need to fully-traverse again.
-vector<VarIdx> graph::findInputChannelsInExpression(const arithmetic::Expression &e) {
+vector<VarIdx> findInputChannelsInExpression(const arithmetic::Expression &e) {
 	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
 
 	vector<VarIdx> inputChannels;
@@ -1589,7 +1589,7 @@ vector<VarIdx> graph::findInputChannelsInExpression(const arithmetic::Expression
 }
 
 //TODO: Clean up this sloppy algorithmic solution. No need to fully-traverse again.
-vector<size_t> graph::findOutputChannelsInExpression(const arithmetic::Expression &e) {
+vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
 
 	vector<VarIdx> outputChannels;
@@ -1692,41 +1692,32 @@ vector<size_t> graph::findOutputChannelsInExpression(const arithmetic::Expressio
 //	size_t channelIdx;
 //};
 
-//TODO: RETVRN HERE to disambiguate channels for pruning graph w/ Projection Sets
-struct ProjectionItem {
-	VarIdx index;
-	bool isChannel = false;
-	bool isSend = false;
-	//bool isInternal;
-	//ProjectionItem partner;
-	operator size_t() const noexcept { return index; }
-	friend ProjectionItem operator+(ProjectionItem lhs, size_t rhs) {
-		lhs.index += rhs;
-		return lhs;
+
+bool isProjectionItemInExpression(const Expression &e, const set<ProjectionItem> &items) {
+	vector<VarIdx> vars = getVarsFromExpression(e);
+	vector<VarIdx> recvs = findInputChannelsInExpression(e);
+	vector<VarIdx> sends = findOutputChannelsInExpression(e);
+	set<VarIdx> recvsLookup(recvs.begin(), recvs.end());
+	set<VarIdx> sendsLookup(sends.begin(), sends.end());
+
+	set<ProjectionItem> exprItems;
+	for (VarIdx var : vars) {
+
+		if (sendsLookup.contains(var)) {
+			exprItems.insert(ProjectionItem(var, true, true));
+
+		} else if (recvsLookup.contains(var)) {
+			exprItems.insert(ProjectionItem(var, true, false));
+
+		} else {
+			exprItems.insert(ProjectionItem(var));
+		}
 	}
 
-	bool operator()(const ProjectionItem& a, const ProjectionItem& b) const {
-		return a.index < b.index;
-	}
-	bool operator()(size_t a, const ProjectionItem& b) const {
-		return a < b.index;
-	}
-	bool operator()(const ProjectionItem& a, size_t b) const {
-		return a.index < b;
-	}
-	ProjectionItem& operator=(const ProjectionItem &other) {
-		this->index = other.index;
-		this->isChannel = other.isChannel;
-		this->isSend = other.isSend;
-		return *this;
-	}
-	ProjectionItem& operator=(size_t num) {
-		this->index = num;
-		return *this;
-	}
-};
-
-//bool isChannelMatch(VarIdx from, VarIdx to)
+	vector<ProjectionItem> sharedItems;
+	std::ranges::set_intersection(items, exprItems, std::back_inserter(sharedItems));
+	return not sharedItems.empty();
+}
 
 
 // Data-driven Decomposition
@@ -1767,17 +1758,17 @@ vector<graph> graph::project() {
 
 		// Extract Dependency Set from transition, if there is any
 		const chp::transition &tran = this->transitions[transitionIdx];
-		vector<VarIdx> guardVars = this->getVarsFromExpression(tran.guard);
+		vector<VarIdx> guardVars = getVarsFromExpression(tran.guard);
 
 		const arithmetic::Choice &action = tran.action;
 		for (const auto &term : action.terms) {
 			for (const auto &action : term.actions) {
-				vector<VarIdx> leftVars = this->getVarsFromExpression(action.lvalue);
+				vector<VarIdx> leftVars = getVarsFromExpression(action.lvalue);
 
 				//TODO: is_definition parameter could be more robust ":=" assignment operand matching
-				vector<VarIdx> rightVars = this->getVarsFromExpression(action.rvalue);
-				vector<VarIdx> inputChannelsUsed = this->findInputChannelsInExpression(action.rvalue);
-				vector<VarIdx> outputChannelsUsed = this->findOutputChannelsInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
+				vector<VarIdx> rightVars = getVarsFromExpression(action.rvalue);
+				vector<VarIdx> inputChannelsUsed = findInputChannelsInExpression(action.rvalue);
+				vector<VarIdx> outputChannelsUsed = findOutputChannelsInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
 
 				// If not assignment, check for output-channel (a.k.a. "send()") which is assignment-ish
 				//TODO: there must be a better way to pre-index not just channels vs vars DURING synthesis but beforehand
@@ -2111,8 +2102,8 @@ vector<graph> graph::project() {
 	//			if (action.lvalue.isUndef()) { continue; }
 
 	//			// Separate assignment into send+recv over a new internal-only channel
-	//			vector<size_t> leftVars = this->getVarsFromExpression(action.lvalue);
-	//			vector<size_t> rightVars = this->getVarsFromExpression(action.rvalue);
+	//			vector<size_t> leftVars = getVarsFromExpression(action.lvalue);
+	//			vector<size_t> rightVars = getVarsFromExpression(action.rvalue);
 	//			if (leftVars.empty() or rightVars.empty()) { continue; }
 	//			//TODO: support multi-assignment [when leftVars.size() > 1]
 	//			//TODO: what about constant assignment [when rightVars.empty()]?
@@ -2305,75 +2296,60 @@ vector<graph> graph::project() {
 	//
 	vector<chp::graph> processes;
 
-	//size_t pid = 0;
-	for (const auto& [var, components] : projectionSets) {
+	size_t pid = 0;
+	for (const auto& [var, items] : projectionSets) {
+		if (pid > 2) { break; }
 		chp::graph process = *this;
 		process.name += + "_" + this->vars[var].name;
+		cout << "extracting: " << process.name << endl;
 		vector<TransitionIdx> toDelete;
-		set<ProjectionItem, std::less<>> projectedComponents(components.begin(), components.end());
+		set<ProjectionItem> varItemsLookup(items.begin(), items.end());
+
 		//TODO: RETVRN HERE ah, make sure to get send vs recv & internal vs external right
-		//TODO: RETVRN HERE now use this->findInputChannelsInExpression & this->findOutputChannelsInExpression
+		//TODO: RETVRN HERE now use findInputChannelsInExpression & findOutputChannelsInExpression
 		// . ... maybe even find-in-transition helpers? nah.
 		//TODO: convert this into a helper
 
 		// Find transitions of a duplicate chp::graph that don't contain any projected component
 		for (TransitionIdx transitionIdx = 0; transitionIdx < process.transitions.size(); transitionIdx++) {
 			const chp::transition &transition = process.transitions[transitionIdx];
-			bool componentFound = false;
+			if (isProjectionItemInExpression(transition.guard, varItemsLookup)) { continue; }
 
-			// First, check the guard
-			vector<VarIdx> guardVars = this->getVarsFromExpression(transition.guard);
-			for (VarIdx var : guardVars) {
-				for (ProjectionItem item : projectedComponents) { //TODO: trying to more exactly compare channels
-					if (var == item.index) { //????TODO: RETVRN HERE don't let directional-channel false-positives through
-						componentFound = true;
-						break;
-					}
-				}
-				//if (componentFound) { break; } //TODO: commenting out these instinctual optimizations for the sake for simpler, faster prototyping until we're confident in correctness
-			}
-			//if (componentFound) { continue; }
-
+			bool matchFound = false;
 			const arithmetic::Choice &action = transition.action;
 			for (const arithmetic::Parallel &term : action.terms) {
 				for (const arithmetic::Action &action : term.actions) {
 
-					// Second, check the LHS of a potential assignment
-					vector<VarIdx> leftVars = this->getVarsFromExpression(action.lvalue);
-					if (not leftVars.empty()) {
-						for (VarIdx var : leftVars) {
-							if (projectedComponents.count(var)) {
-								componentFound = true;
-								break;
-							}
-						}
-						//if (componentFound) { break; }
+					if (isProjectionItemInExpression(action.lvalue, varItemsLookup)) {
+						matchFound = true;
+						break;
 					}
-
-					// Third, check the body of the statement
-					vector<VarIdx> rightVars = this->getVarsFromExpression(action.rvalue);
-					for (VarIdx var : rightVars) {
-						if (projectedComponents.count(var)) {
-							componentFound = true;
-							break;
-						}
+					if (isProjectionItemInExpression(action.rvalue, varItemsLookup)) {
+						matchFound = true;
+						break;
 					}
 				}
-				//if (componentFound) { break; }
+				if (matchFound) { break; }
 			}
-			if (componentFound) { continue; }
+			if (matchFound) { continue; }
 
 			toDelete.push_back(transitionIdx);
 		}
+		cout << "garbage collected: " << toDelete.size() << endl;
 
 		// Prunce components outside the projection
+		size_t watchDog = 0;
 		for (TransitionIdx transitionIdx : toDelete) {
 			petri::iterator irrelevantTransitionIt(petri::transition::type, transitionIdx);
 			process.super::pinch(irrelevantTransitionIt);
+
+			if (watchDog > 2) { cout << "woof!" << endl; break; }
+			watchDog++;
 		}
 
 		processes.push_back(process);
-		//pid++;
+		cout << "extracted." << endl;
+		pid++;
 	}
 
 	cout << "projected." << endl;

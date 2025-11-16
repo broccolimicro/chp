@@ -67,6 +67,10 @@ using petri::parallel;
 using petri::choice;
 using petri::sequence;
 
+//TODO: beyond this namespace?
+typedef size_t TransitionIdx;
+typedef size_t VarIdx;
+
 struct place : petri::place
 {
 	place();
@@ -193,10 +197,6 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void extractUseDefFromTransition(size_t transition_idx);
 	void computeUseDefChains();
 
-	vector<size_t> getVarsFromExpression(const arithmetic::Expression &e);
-	vector<size_t> findInputChannelsInExpression(const arithmetic::Expression &e);
-	vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e);
-
 	//TODO: better name for higher-order transformation? substitution? variable renaming? lifetime / live range splitting?
 	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
 	void renameVarAtTransition(size_t varIdx, size_t transitionIdx);
@@ -206,6 +206,45 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	//string to_string(const arithmetic::Expression &e) const; //TODO: idea for pretty-printing WITH var names rendered, but I don't want to make dependency
 };
+
+struct ProjectionItem {
+	VarIdx index;
+	bool isChannel = false;
+	bool isSend = false;
+	//bool isInternal;
+	//ProjectionItem partner;
+	operator size_t() const noexcept { return index; }
+	friend ProjectionItem operator+(ProjectionItem lhs, size_t rhs) {
+		lhs.index += rhs;
+		return lhs;
+	}
+
+	bool operator()(const ProjectionItem& a, const ProjectionItem& b) const {
+		return a.index < b.index;
+	}
+	bool operator()(size_t a, const ProjectionItem& b) const {
+		return a < b.index;
+	}
+	bool operator()(const ProjectionItem& a, size_t b) const {
+		return a.index < b;
+	}
+	ProjectionItem& operator=(const ProjectionItem &other) {
+		this->index = other.index;
+		this->isChannel = other.isChannel;
+		this->isSend = other.isSend;
+		return *this;
+	}
+	ProjectionItem& operator=(size_t num) {
+		this->index = num;
+		return *this;
+	}
+	//bool operator==(const ProjectionItem&) const = default;
+};
+
+vector<size_t> getVarsFromExpression(const arithmetic::Expression &e);
+vector<size_t> findInputChannelsInExpression(const arithmetic::Expression &e);
+vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e);
+bool isProjectionItemInExpression(const arithmetic::Expression &e, const set<ProjectionItem> &items);
 
 }
 
