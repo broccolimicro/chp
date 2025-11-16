@@ -535,9 +535,10 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 vector<graph> graph::decompose() {  //chp::graph &g) {}
 	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
 	cout << endl << "\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
-	cout << ">>> " << this->name << endl;
+	cout << "decomposing: " << this->name << endl;
 
 	this->convertToDSA();
+	this->computeUseDefChains();
 	vector<graph> processes = this->project();
 
 	cout << "decomposed." << endl;
@@ -1570,20 +1571,39 @@ vector<size_t> graph::getVarsFromExpression(const arithmetic::Expression &e) {
 }
 
 //TODO: Clean up this sloppy algorithmic solution. No need to fully-traverse again.
-vector<size_t> graph::findOutputChannelInExpression(const arithmetic::Expression &e) {
+vector<VarIdx> graph::findInputChannelsInExpression(const arithmetic::Expression &e) {
 	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
 
+	vector<VarIdx> inputChannels;
+	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+		// Iterate across all sub-expression leaves
+		const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+		for (const arithmetic::Operand &operand : operation.operands) {
+			if (operand.cnst.sval == "recv") {
+				inputChannels.push_back(e.sub.elems.elems[0].operands[0].index);
+			}
+		}
+	}
+
+	return inputChannels;
+}
+
+//TODO: Clean up this sloppy algorithmic solution. No need to fully-traverse again.
+vector<size_t> graph::findOutputChannelsInExpression(const arithmetic::Expression &e) {
+	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
+
+	vector<VarIdx> outputChannels;
 	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
 		// Iterate across all sub-expression leaves
 		const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
 		for (const arithmetic::Operand &operand : operation.operands) {
 			if (operand.cnst.sval == "send") {
-				return {e.sub.elems.elems[0].operands[0].index};
+				outputChannels.push_back(e.sub.elems.elems[0].operands[0].index);
 			}
 		}
 	}
 
-	return {};
+	return outputChannels;
 }
 
 //string graph::to_string(const Expression &e) {
@@ -1673,35 +1693,74 @@ vector<size_t> graph::findOutputChannelInExpression(const arithmetic::Expression
 //};
 
 //TODO: RETVRN HERE to disambiguate channels for pruning graph w/ Projection Sets
-struct Channel {
-	bool isSend;
-	bool isInternal;
-	VarIdx partner; //TODO: no, they'll share index or maybe they shouldn't. they shouldn't.
+struct ProjectionItem {
+	VarIdx index;
+	bool isChannel = false;
+	bool isSend = false;
+	//bool isInternal;
+	//ProjectionItem partner;
+	operator size_t() const noexcept { return index; }
+	friend ProjectionItem operator+(ProjectionItem lhs, size_t rhs) {
+		lhs.index += rhs;
+		return lhs;
+	}
+
+	bool operator()(const ProjectionItem& a, const ProjectionItem& b) const {
+		return a.index < b.index;
+	}
+	bool operator()(size_t a, const ProjectionItem& b) const {
+		return a < b.index;
+	}
+	bool operator()(const ProjectionItem& a, size_t b) const {
+		return a.index < b;
+	}
+	ProjectionItem& operator=(const ProjectionItem &other) {
+		this->index = other.index;
+		this->isChannel = other.isChannel;
+		this->isSend = other.isSend;
+		return *this;
+	}
+	ProjectionItem& operator=(size_t num) {
+		this->index = num;
+		return *this;
+	}
 };
 
-
 //bool isChannelMatch(VarIdx from, VarIdx to)
+
 
 // Data-driven Decomposition
 vector<graph> graph::project() {
 	cout << endl << "projecting." << endl;
 
-	// Index definitions & references per variable
-	this->computeUseDefChains();
-	cout << endl;
+	unordered_map<VarIdx, vector<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
+	set<VarIdx> inputChannels, outputChannels;
+
+	set<VarIdx> internalChannels;
+	unordered_map<VarIdx, vector<VarIdx>> channelRecvs;  // only internal channels
+	unordered_map<VarIdx, vector<VarIdx>> channelSends;  // only internal channels
+
+	//set<VarIdx> recvChannels; //TODO: unordered obvi
+	//set<VarIdx> sendChannels; //TODO: unordered obvi
+	//auto isInternalChannelRecv = [&channelRecvs](VarIdx var) -> bool {
+	//	return std::find(intRecvs.begin(), intRecvs.end(), varIdx) != intRecvs.end();
+	//};
+
+	//[this, &channelSends, &channelRecvs, &dep, &inputChannels, &outputChannels](VarIdx varIdx) {
+	//	vector<VarIdx> &intRecvs = channelRecvs[dep.first];
+	//	vector<VarIdx> &intSends = channelSends[dep.first];
+	//	set<VarIdx> &extRecvs = inputChannels;
+	//	set<VarIdx> &extSends = outputChannels;
+	//	bool isInternalChannelRecv = std::find(intRecvs.begin(), intRecvs.end(), varIdx) != intRecvs.end();
+	//	bool isInternalChannelSend = std::find(intSends.begin(), intSends.end(), varIdx) != intSends.end();
+	//	bool isExternalChannelRecv = extRecvs.contains(varIdx);
+	//	bool isExternalChannelSend = extSends.contains(varIdx);
 
 	//
 	// 1) Build Dependency Sets
 	//
 	//TODO: unordered_sets, obviously
 	unordered_map<VarIdx, vector<VarIdx>> dependencySets;  //TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets!
-	unordered_map<VarIdx, vector<VarIdx>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
-	set<VarIdx> inputChannels, outputChannels;
-
-	set<VarIdx> internalChannels;
-	unordered_map<VarIdx, vector<VarIdx>> channelSends;  // only internal channels
-	unordered_map<VarIdx, vector<VarIdx>> channelRecvs;  // only internal channels
-
 	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
 		petri::iterator t_it(transition::type, transitionIdx);
 		if (not this->is_valid(t_it)) { continue; }
@@ -1717,33 +1776,56 @@ vector<graph> graph::project() {
 
 				//TODO: is_definition parameter could be more robust ":=" assignment operand matching
 				vector<VarIdx> rightVars = this->getVarsFromExpression(action.rvalue);
+				vector<VarIdx> inputChannelsUsed = this->findInputChannelsInExpression(action.rvalue);
+				vector<VarIdx> outputChannelsUsed = this->findOutputChannelsInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
 
 				// If not assignment, check for output-channel (a.k.a. "send()") which is assignment-ish
 				//TODO: there must be a better way to pre-index not just channels vs vars DURING synthesis but beforehand
 				//  AND it should somehow index the partition between input vs output channels (perhaps, in-only, out-only, and bi-use'd?)
 				//  within "bi-used" we can separate "internal-communication only" channels vs bi-used chans w/ external side-effects/dependencies
 				if (leftVars.empty()) {
-					vector<VarIdx> outputChannelsUsed = this->findOutputChannelInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
 					if (outputChannelsUsed.empty()) { continue; }
 
-					VarIdx outputChannel = outputChannelsUsed[0];
+					VarIdx outputChannel = outputChannelsUsed[0]; //TODO: support more than one outputChannel per transition
 					outputChannels.insert(outputChannel);
 					cout << " ! CHAN<" << this->vars[outputChannel].name << ">" << endl;
 
 					// Prune redundant self from right-hand side
 					rightVars.erase(std::remove(rightVars.begin(), rightVars.end(), outputChannel), rightVars.end());
 					dependencySets[outputChannel].insert(dependencySets[outputChannel].begin(), rightVars.begin(), rightVars.end());
+					//projectionSets[outputChannel].insert(projectionSets[outputChannel].begin(), rightVars.begin(), rightVars.end());
 					projectionSets[outputChannel].insert(projectionSets[outputChannel].begin(), rightVars.begin(), rightVars.end());
-					projectionSets[outputChannel].push_back(outputChannel);
-					//TODO: aha, these need to be overwritten with new variable
 
+					for (VarIdx var : rightVars) {
+						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
+							projectionSets[outputChannel].push_back(ProjectionItem(var, true, false));
+
+						} else {
+							projectionSets[outputChannel].push_back(ProjectionItem(var));
+						}
+					}
+					//projectionSets[outputChannel].push_back(outputChannel);
+					projectionSets[outputChannel].push_back(ProjectionItem(outputChannel, true, true));
+					// aha, these projectionSets need to be overwritten with new variable. Done.
+
+				// Not an output channel, set DependencySet 
 				} else {
 					//TODO: what if lvalue is a larger expression than just 1 left-var on top? ...or "-x = 3"
 					// Assume for now, left-hand is always direct single-assignment
 					VarIdx assignedVar = leftVars[0];
 					dependencySets[assignedVar].insert(dependencySets[assignedVar].begin(), rightVars.begin(), rightVars.end());
-					projectionSets[assignedVar].insert(projectionSets[assignedVar].begin(), rightVars.begin(), rightVars.end());
-					projectionSets[assignedVar].push_back(assignedVar);
+					//projectionSets[assignedVar].insert(projectionSets[assignedVar].begin(), rightVars.begin(), rightVars.end());
+					//projectionSets[assignedVar].push_back(assignedVar);
+					//projectionSets[assignedVar].insert(projectionSets[assignedVar].begin(), rightVars.begin(), rightVars.end());
+					for (VarIdx var : rightVars) {
+						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
+							projectionSets[assignedVar].push_back(ProjectionItem(var, true, false));
+
+						} else {
+							projectionSets[assignedVar].push_back(ProjectionItem(var));
+						}
+					}
+					projectionSets[assignedVar].push_back(ProjectionItem(assignedVar));
 				}
 			}
 		}
@@ -1826,7 +1908,7 @@ vector<graph> graph::project() {
 		//// Insert new "x_fork := x;" copy-assignment immediately after x assignment
 		//// This serves as the base of a fork, splitting/parallelizing out to every use/reference
 		VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork");
-		projectionSets[varForkIdx].push_back(varForkIdx);
+		projectionSets[varForkIdx].push_back(ProjectionItem(varForkIdx));
 
 		//arithmetic::Action forkAssignment;
 		//forkAssignment.lvalue = arithmetic::Expression::varOf(varForkIdx);
@@ -1864,7 +1946,7 @@ vector<graph> graph::project() {
 		chp::transition forkSendTransition(guard, arithmetic::Choice({{forkSend}}));
 
 		petri::iterator forkSendTransitionIt = this->super::insert_after(defTransitionIt, forkSendTransition);
-		projectionSets[dependency].push_back(forkChannelIdx);
+		projectionSets[dependency].push_back(ProjectionItem(forkChannelIdx, true, true));
 		channelSends[dependency].push_back(forkChannelIdx);
 
 
@@ -1878,7 +1960,7 @@ vector<graph> graph::project() {
 		umbilicalCords.insert(umbilicalCordIt);
 		petri::iterator forkRecvTransitionIt = this->super::insert_after(umbilicalCordIt, forkRecvTransition);
 		//internalChannels[transitionIdx] = make_pair(forkSendTransitionIt.index, forkRecvTransitionIt.index);
-		projectionSets[varForkIdx].push_back(forkChannelIdx);
+		projectionSets[varForkIdx].push_back(ProjectionItem(forkChannelIdx, true, false));
 		channelRecvs[dependency].push_back(forkChannelIdx);
 
 
@@ -1952,7 +2034,7 @@ vector<graph> graph::project() {
 			cout << endl << "++ " << channelIdx << endl;
 			cout << "++ +  +> " << channelSendExpr << endl;
 			petri::iterator branchSendTransitionIt = this->super::insert_after(branchHeadIt, branchSendTransition);
-			projectionSets[varForkIdx].push_back(channelIdx);
+			projectionSets[varForkIdx].push_back(ProjectionItem(channelIdx, true, true));
 			channelSends[varForkIdx].push_back(channelIdx);
 
 
@@ -1973,7 +2055,7 @@ vector<graph> graph::project() {
 			petri::iterator branchTailIt = this->next(branchRecvTransitionIt)[0];
 			this->super::connect(branchTailIt, branchTargetTransitionIt);
 			//internalChannels[transitionIdx] = make_pair(branchSendTransitionIt.index, branchRecvTransitionIt.index);
-			projectionSets[user].push_back(channelIdx);
+			projectionSets[user].push_back(ProjectionItem(channelIdx, true, false));
 			channelRecvs[user].push_back(channelIdx);
 
 
@@ -1983,9 +2065,9 @@ vector<graph> graph::project() {
 			usageRename.set(dependency, varUsageIdx);
 			//TODO: or is it fork-instead-of-dependency that needs to be replaced? triple-check
 			for (VarIdx user : users) {
-				vector<VarIdx> &p = projectionSets[user];
-				p.erase(std::remove(p.begin(), p.end(), dependency), p.end());
-				p.push_back(varUsageIdx);
+				vector<ProjectionItem> &p = projectionSets[user];
+				p.erase(std::remove(p.begin(), p.end(), ProjectionItem(dependency)), p.end());
+				p.push_back(ProjectionItem(varUsageIdx));
 			}
 
 			////useDefChain &userUseDefChain = this->useDefChains[user];
@@ -2128,7 +2210,7 @@ vector<graph> graph::project() {
 		cout << endl << "++ " << channelIdx << endl;
 		cout << "++ +  +> " << channelSendExpr << endl;
 		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
-		projectionSets[dependency].push_back(channelIdx);
+		projectionSets[dependency].push_back(ProjectionItem(channelIdx, true, true));
 		channelSends[dependency].push_back(channelIdx);
 
 
@@ -2149,7 +2231,7 @@ vector<graph> graph::project() {
 		umbilicalCords.insert(umbilicalCordIt);
 		petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
 		//internalChannels[transitionIdx] = make_pair(internalSendTransitionIt.index, internalRecvTransitionIt.index);
-		projectionSets[user].push_back(channelIdx);
+		projectionSets[user].push_back(ProjectionItem(channelIdx, true, false));
 		channelRecvs[user].push_back(channelIdx);
 
 
@@ -2157,9 +2239,9 @@ vector<graph> graph::project() {
 		Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
 		usageRename.set(dependency, varUsageIdx);
 		for (VarIdx user : users) {
-			vector<VarIdx> &p = projectionSets[user];
-			p.erase(std::remove(p.begin(), p.end(), dependency), p.end());
-			p.push_back(varUsageIdx);
+			vector<ProjectionItem> &p = projectionSets[user];
+			p.erase(std::remove(p.begin(), p.end(), ProjectionItem(dependency)), p.end());
+			p.push_back(ProjectionItem(varUsageIdx));
 		}
 
 		//useDefChain &userUseDefChain = this->useDefChains[user];
@@ -2192,20 +2274,26 @@ vector<graph> graph::project() {
 	// 4) Build Projection Sets
 	//
 	cout << endl << "  # ## ### < PS> ### ## #  " << endl;
+	auto toString = [this](const ProjectionItem &p) -> string {
+		return this->vars[p.index].name + (p.isChannel ? (p.isSend ? "!" : "?") : "");
+	};
 
-	std::for_each(projectionSets.begin(), projectionSets.end(), [this, &channelSends, &channelRecvs, &inputChannels, &outputChannels](auto &dep) {
+	//std::for_each(projectionSets.begin(), projectionSets.end(), [this, &channelSends, &channelRecvs, &inputChannels, &outputChannels, &toString](auto &dep) {
+	std::for_each(projectionSets.begin(), projectionSets.end(), [this, &toString](auto &dep) {
 			cout << "  <( " << this->vars[dep.first].name << " )>  ";
 			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "),
-					[this, &channelSends, &channelRecvs, &dep, &inputChannels, &outputChannels](VarIdx varIdx) {
-						vector<VarIdx> &intRecvs = channelRecvs[dep.first];
-						vector<VarIdx> &intSends = channelSends[dep.first];
-						set<VarIdx> &extRecvs = inputChannels;
-						set<VarIdx> &extSends = outputChannels;
-						bool isInternalChannelRecv = std::find(intRecvs.begin(), intRecvs.end(), varIdx) != intRecvs.end();
-						bool isInternalChannelSend = std::find(intSends.begin(), intSends.end(), varIdx) != intSends.end();
-						bool isExternalChannelRecv = extRecvs.contains(varIdx);
-						bool isExternalChannelSend = extSends.contains(varIdx);
-						return this->vars[varIdx].name + (isInternalChannelSend ? "!" : (isInternalChannelRecv ? "?" : "")) + (isExternalChannelSend ? "!" : (isExternalChannelRecv ? "?" : ""));
+					//[this, &channelSends, &channelRecvs, &dep, &inputChannels, &outputChannels, &toString](const ProjectionItem &item) {
+					[&toString](const ProjectionItem &item) {
+						//vector<VarIdx> &intRecvs = channelRecvs[dep.first];
+						//vector<VarIdx> &intSends = channelSends[dep.first];
+						//set<VarIdx> &extRecvs = inputChannels;
+						//set<VarIdx> &extSends = outputChannels;
+						//bool isInternalChannelRecv = std::find(intRecvs.begin(), intRecvs.end(), item) != intRecvs.end();
+						//bool isInternalChannelSend = std::find(intSends.begin(), intSends.end(), item) != intSends.end();
+						//bool isExternalChannelRecv = extRecvs.contains(item);
+						//bool isExternalChannelSend = extSends.contains(item);
+						//return this->vars[item].name + (isInternalChannelSend ? "!" : (isInternalChannelRecv ? "?" : "")) + (isExternalChannelSend ? "!" : (isExternalChannelRecv ? "?" : ""));
+						return toString(item);
 					});
 			cout << endl;
 			});
@@ -2215,15 +2303,17 @@ vector<graph> graph::project() {
 	//
 	// 5) Project
 	//
-	vector<chp::graph> processes; //(projectionSets.size(), *this);
-	
-	size_t pid = 0;
+	vector<chp::graph> processes;
+
+	//size_t pid = 0;
 	for (const auto& [var, components] : projectionSets) {
 		chp::graph process = *this;
 		process.name += + "_" + this->vars[var].name;
 		vector<TransitionIdx> toDelete;
-		set<TransitionIdx> projectedComponents(components.begin(), components.end());
+		set<ProjectionItem, std::less<>> projectedComponents(components.begin(), components.end());
 		//TODO: RETVRN HERE ah, make sure to get send vs recv & internal vs external right
+		//TODO: RETVRN HERE now use this->findInputChannelsInExpression & this->findOutputChannelsInExpression
+		// . ... maybe even find-in-transition helpers? nah.
 		//TODO: convert this into a helper
 
 		// Find transitions of a duplicate chp::graph that don't contain any projected component
@@ -2234,15 +2324,15 @@ vector<graph> graph::project() {
 			// First, check the guard
 			vector<VarIdx> guardVars = this->getVarsFromExpression(transition.guard);
 			for (VarIdx var : guardVars) {
-				for (VarIdx component : projectedComponents) { //TODO: trying to more exactly compare channels
-					if (var == component) { //????TODO: RETVRN HERE don't let directional-channel false-positives through
+				for (ProjectionItem item : projectedComponents) { //TODO: trying to more exactly compare channels
+					if (var == item.index) { //????TODO: RETVRN HERE don't let directional-channel false-positives through
 						componentFound = true;
 						break;
 					}
 				}
-				if (componentFound) { break; }
+				//if (componentFound) { break; } //TODO: commenting out these instinctual optimizations for the sake for simpler, faster prototyping until we're confident in correctness
 			}
-			if (componentFound) { continue; }
+			//if (componentFound) { continue; }
 
 			const arithmetic::Choice &action = transition.action;
 			for (const arithmetic::Parallel &term : action.terms) {
@@ -2257,7 +2347,7 @@ vector<graph> graph::project() {
 								break;
 							}
 						}
-						if (componentFound) { break; }
+						//if (componentFound) { break; }
 					}
 
 					// Third, check the body of the statement
@@ -2269,7 +2359,7 @@ vector<graph> graph::project() {
 						}
 					}
 				}
-				if (componentFound) { break; }
+				//if (componentFound) { break; }
 			}
 			if (componentFound) { continue; }
 
@@ -2283,7 +2373,7 @@ vector<graph> graph::project() {
 		}
 
 		processes.push_back(process);
-		pid++;
+		//pid++;
 	}
 
 	cout << "projected." << endl;

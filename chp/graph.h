@@ -194,7 +194,8 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void computeUseDefChains();
 
 	vector<size_t> getVarsFromExpression(const arithmetic::Expression &e);
-	vector<size_t> findOutputChannelInExpression(const arithmetic::Expression &e);
+	vector<size_t> findInputChannelsInExpression(const arithmetic::Expression &e);
+	vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e);
 
 	//TODO: better name for higher-order transformation? substitution? variable renaming? lifetime / live range splitting?
 	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
