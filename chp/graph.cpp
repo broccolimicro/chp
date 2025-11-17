@@ -1693,7 +1693,7 @@ vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 //};
 
 
-bool isProjectionItemInExpression(const Expression &e, const set<ProjectionItem> &items) {
+bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionItem> &items, bool debug) {
 	vector<VarIdx> vars = getVarsFromExpression(e);
 	vector<VarIdx> recvs = findInputChannelsInExpression(e);
 	vector<VarIdx> sends = findOutputChannelsInExpression(e);
@@ -1715,7 +1715,13 @@ bool isProjectionItemInExpression(const Expression &e, const set<ProjectionItem>
 	}
 
 	vector<ProjectionItem> sharedItems;
-	std::ranges::set_intersection(items, exprItems, std::back_inserter(sharedItems));
+	std::ranges::set_difference(exprItems, items, std::back_inserter(sharedItems));
+	if (debug) {
+		cout << "found: ";
+		std::for_each(sharedItems.begin(), sharedItems.end(), [](const ProjectionItem &item) { cout << item << ", "; });
+		cout << "  ...in " << e;
+		cout << endl;
+	}
 	return not sharedItems.empty();
 }
 
@@ -2298,7 +2304,7 @@ vector<graph> graph::project() {
 
 	size_t pid = 0;
 	for (const auto& [var, items] : projectionSets) {
-		if (pid > 2) { break; }
+		//if (pid > 2) { break; }
 		chp::graph process = *this;
 		process.name += + "_" + this->vars[var].name;
 		cout << "extracting: " << process.name << endl;
@@ -2313,39 +2319,50 @@ vector<graph> graph::project() {
 		// Find transitions of a duplicate chp::graph that don't contain any projected component
 		for (TransitionIdx transitionIdx = 0; transitionIdx < process.transitions.size(); transitionIdx++) {
 			const chp::transition &transition = process.transitions[transitionIdx];
-			if (isProjectionItemInExpression(transition.guard, varItemsLookup)) { continue; }
+			if (isDisqualifyingItemInExpression(transition.guard, varItemsLookup)) {
+				isDisqualifyingItemInExpression(transition.guard, varItemsLookup, true);
+				toDelete.push_back(transitionIdx);
+				continue;
+			}
 
-			bool matchFound = false;
+			bool disqualifyingItemFound = false;
 			const arithmetic::Choice &action = transition.action;
 			for (const arithmetic::Parallel &term : action.terms) {
 				for (const arithmetic::Action &action : term.actions) {
 
-					if (isProjectionItemInExpression(action.lvalue, varItemsLookup)) {
-						matchFound = true;
+					if (isDisqualifyingItemInExpression(action.lvalue, varItemsLookup)) {
+						isDisqualifyingItemInExpression(action.lvalue, varItemsLookup, true);
+						disqualifyingItemFound = true;
 						break;
 					}
-					if (isProjectionItemInExpression(action.rvalue, varItemsLookup)) {
-						matchFound = true;
+					if (isDisqualifyingItemInExpression(action.rvalue, varItemsLookup)) {
+						disqualifyingItemFound = true;
+						isDisqualifyingItemInExpression(action.rvalue, varItemsLookup, true);
 						break;
 					}
 				}
-				if (matchFound) { break; }
+				if (disqualifyingItemFound) { break; }
 			}
-			if (matchFound) { continue; }
-
-			toDelete.push_back(transitionIdx);
+			if (disqualifyingItemFound) { 
+				toDelete.push_back(transitionIdx);
+			}
 		}
 		cout << "garbage collected: " << toDelete.size() << endl;
 
 		// Prunce components outside the projection
 		size_t watchDog = 0;
 		for (TransitionIdx transitionIdx : toDelete) {
-			petri::iterator irrelevantTransitionIt(petri::transition::type, transitionIdx);
-			process.super::pinch(irrelevantTransitionIt);
+			//petri::iterator irrelevantTransitionIt(petri::transition::type, transitionIdx);
+			//process.super::pinch(irrelevantTransitionIt);
+			chp::transition &transition = process.transitions[transitionIdx];
+			transition.guard = Expression::vdd();
+			transition.action = arithmetic::Choice({{}});
 
-			if (watchDog > 2) { cout << "woof!" << endl; break; }
+			if (watchDog > 256) { cout << "woof!" << endl; break; }
 			watchDog++;
 		}
+		//process.post_process(true, false);
+		process.reduce();
 
 		processes.push_back(process);
 		cout << "extracted." << endl;

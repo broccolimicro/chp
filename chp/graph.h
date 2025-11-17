@@ -244,7 +244,7 @@ struct ProjectionItem {
 vector<size_t> getVarsFromExpression(const arithmetic::Expression &e);
 vector<size_t> findInputChannelsInExpression(const arithmetic::Expression &e);
 vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e);
-bool isProjectionItemInExpression(const arithmetic::Expression &e, const set<ProjectionItem> &items);
+bool isDisqualifyingItemInExpression(const arithmetic::Expression &e, const set<ProjectionItem> &items, bool debug=false);
 
 }
 
