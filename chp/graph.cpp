@@ -1867,7 +1867,7 @@ vector<graph> graph::project() {
 
 
 	//
-	// 2) Insert copy variables
+	// 2) Insert copy variables & internal-communication channels
 	//
 	//TODO: perhaps a Mapping<size_t> is more appropriate?
 	//TODO: leverage newly introduced TransitionIdx vs VarIdx typedefs for readability
@@ -2056,7 +2056,6 @@ vector<graph> graph::project() {
 			channelRecvs[user].push_back(channelIdx);
 
 
-
 			// Substitute "x_cp_n" for x usages
 			Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
 			usageRename.set(dependency, varUsageIdx);
@@ -2090,88 +2089,6 @@ vector<graph> graph::project() {
 		this->super::erase(originalUmbilicalCordIt);
 		cout << endl;
 	}
-
-	//
-	// 3) Insert internal-communication channels
-	//
-	//unordered_map<VarIdx, vector<VarIdx>> projectionSets;
-	//unordered_map<size_t, pair<size_t, size_t>> internalChannels;  // oldAssignmentTransitionIdx -> <sendTransitionIdx, recvTransitionIdx>
-	//set<petri::iterator> umbilicalCords;
-
-	//// Crawl for every assignment
-	//TODO: traverse more efficiently, ideally combining this operation into previous traversals
-	//size_t transitionIdx = 0;
-	//for (chp::transition &transition : this->transitions) {
-	//	arithmetic::Choice &choice = transition.action;
-	//	for (arithmetic::Parallel &term : choice.terms) {
-	//		for (arithmetic::Action &action : term.actions) {
-	//			if (action.lvalue.isUndef()) { continue; }
-
-	//			// Separate assignment into send+recv over a new internal-only channel
-	//			vector<size_t> leftVars = getVarsFromExpression(action.lvalue);
-	//			vector<size_t> rightVars = getVarsFromExpression(action.rvalue);
-	//			if (leftVars.empty() or rightVars.empty()) { continue; }
-	//			//TODO: support multi-assignment [when leftVars.size() > 1]
-	//			//TODO: what about constant assignment [when rightVars.empty()]?
-
-	//			petri::iterator thisTransitionIt(petri::transition::type, transitionIdx);
-	//			arithmetic::Expression Guard = transition.guard;
-	//			arithmetic::Expression LHS = action.lvalue;
-	//			arithmetic::Expression RHS = action.rvalue;
-	//			size_t channelIdx = this->getEnumeratedVar(leftVars[0], 0, "_CHAN");
-	//			//TODO: prevent channel name collision with malicious var name >:)
-	//			//TODO: don't do both halves if one is an external communication
-
-	//			// Insert "this.guard -> CHANNEL.send(this.rhs)"
-	//			arithmetic::Action internalSend;
-	//			arithmetic::Expression channelSendExpr = arithmetic::call(
-	//					"send",
-	//					{arithmetic::Expression::varOf(channelIdx), RHS}
-	//					);
-	//			internalSend.lvalue = arithmetic::Expression::undef();
-	//			internalSend.rvalue = channelSendExpr;
-	//			chp::transition internalSendTransition(
-	//				Guard, arithmetic::Choice({{internalSend}}));
-
-	//			cout << endl << "++ " << channelIdx << endl;
-	//			cout << "++ +  +> " << channelSendExpr << endl;
-	//			petri::iterator internalSendTransitionIt = this->super::insert_after(thisTransitionIt, internalSendTransition);
-
-
-	//			// Insert "this.lhs := CHANNEL.recv()"
-	//			arithmetic::Action internalRecv;
-	//			arithmetic::Expression channelRecvExpr = arithmetic::call(
-	//					"recv",
-	//					{arithmetic::Expression::varOf(channelIdx)}
-	//					);
-	//			internalRecv.lvalue = LHS;
-	//			internalRecv.rvalue = channelRecvExpr;
-	//			chp::transition internalRecvTransition(
-	//					arithmetic::Expression::vdd(), arithmetic::Choice({{internalRecv}}));
-
-	//			cout << "++ +  <+ " << channelRecvExpr << endl;
-
-	//			petri::iterator umbilicalCordIt = this->super::insert_after(internalSendTransitionIt, chp::transition());
-	//			umbilicalCords.insert(umbilicalCordIt);
-	//			petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
-	//			//internalChannels[transitionIdx] = make_pair(internalSendTransitionIt.index, internalRecvTransitionIt.index);
-	//		}
-	//	}
-	//	transitionIdx++;
-	//}
-
-	//// Snip the umbilical cords
-	//for (auto umbilicalCord : umbilicalCords) {
-	//	//this->erase_arc(umbilicalCord, internalSendTransitionIt);
-	//	//this->erase_arc(umbilicalCord, internalRecvTransitionIt);
-	//	//this->erase_arc(this->in(umbilicalCord)[0]);
-	//	//this->erase_arc(this->out(umbilicalCord)[0]);
-	//	//auto [inTransitions, outTransitions] = this->super::erase(umbilicalCord);
-	//	//this->pinch(umbilicalCord);
-	//	this->super::erase(umbilicalCord);
-	//	//TODO: Reconnect place-heads & -tails of orphaned straightline programs so they represent petri processes
-	//}
-
 
 
 	// Identify multi-use variables that need to fork into branching copies
@@ -2260,37 +2177,19 @@ vector<graph> graph::project() {
 		}
 	}
 
-	//TODO: very fun, but the snip is not the right approach, the Projection Sets help us white-list what to pick
-	//for (petri::iterator umbilicalCord : umbilicalCords) {
-	//	this->super::erase(umbilicalCord);
-	//}
 
-
-
-	//
-	// 4) Build Projection Sets
-	//
 	cout << endl << "  # ## ### < PS> ### ## #  " << endl;
 	auto toString = [this](const ProjectionItem &p) -> string {
 		return this->vars[p.index].name + (p.isChannel ? (p.isSend ? "!" : "?") : "");
 	};
 
-	//std::for_each(projectionSets.begin(), projectionSets.end(), [this, &channelSends, &channelRecvs, &inputChannels, &outputChannels, &toString](auto &dep) {
-	std::for_each(projectionSets.begin(), projectionSets.end(), [this, &toString](auto &dep) {
+	std::for_each(projectionSets.begin(), projectionSets.end(),
+			[this, &toString](auto &dep) {
 			cout << "  <( " << this->vars[dep.first].name << " )>  ";
+
 			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "),
-					//[this, &channelSends, &channelRecvs, &dep, &inputChannels, &outputChannels, &toString](const ProjectionItem &item) {
 					[&toString](const ProjectionItem &item) {
-						//vector<VarIdx> &intRecvs = channelRecvs[dep.first];
-						//vector<VarIdx> &intSends = channelSends[dep.first];
-						//set<VarIdx> &extRecvs = inputChannels;
-						//set<VarIdx> &extSends = outputChannels;
-						//bool isInternalChannelRecv = std::find(intRecvs.begin(), intRecvs.end(), item) != intRecvs.end();
-						//bool isInternalChannelSend = std::find(intSends.begin(), intSends.end(), item) != intSends.end();
-						//bool isExternalChannelRecv = extRecvs.contains(item);
-						//bool isExternalChannelSend = extSends.contains(item);
-						//return this->vars[item].name + (isInternalChannelSend ? "!" : (isInternalChannelRecv ? "?" : "")) + (isExternalChannelSend ? "!" : (isExternalChannelRecv ? "?" : ""));
-						return toString(item);
+					return toString(item);
 					});
 			cout << endl;
 			});
@@ -2298,29 +2197,25 @@ vector<graph> graph::project() {
 
 
 	//
-	// 5) Project
+	// 3) Project
 	//
 	vector<chp::graph> processes;
 
-	size_t pid = 0;
 	for (const auto& [var, items] : projectionSets) {
-		//if (pid > 2) { break; }
 		chp::graph process = *this;
 		process.name += + "_" + this->vars[var].name;
 		cout << "extracting: " << process.name << endl;
 		vector<TransitionIdx> toDelete;
-		set<ProjectionItem> varItemsLookup(items.begin(), items.end());
-
-		//TODO: RETVRN HERE ah, make sure to get send vs recv & internal vs external right
-		//TODO: RETVRN HERE now use findInputChannelsInExpression & findOutputChannelsInExpression
-		// . ... maybe even find-in-transition helpers? nah.
-		//TODO: convert this into a helper
+		set<ProjectionItem> varItems(items.begin(), items.end());
 
 		// Find transitions of a duplicate chp::graph that don't contain any projected component
 		for (TransitionIdx transitionIdx = 0; transitionIdx < process.transitions.size(); transitionIdx++) {
+			//TODO: inject these where appropriate! because graph.transitions is an index_vector!! ask ned if instead we should just make a VaildIterator of some sort of filter/view of the index_vector so we don't pollute the codebase with this foreseeable footgun:
+			if (not process.transitions.is_valid(transitionIdx)) { continue; }
 			const chp::transition &transition = process.transitions[transitionIdx];
-			if (isDisqualifyingItemInExpression(transition.guard, varItemsLookup)) {
-				isDisqualifyingItemInExpression(transition.guard, varItemsLookup, true);
+
+			if (isDisqualifyingItemInExpression(transition.guard, varItems)) {
+				isDisqualifyingItemInExpression(transition.guard, varItems, true);  // Repeat to log debug info
 				toDelete.push_back(transitionIdx);
 				continue;
 			}
@@ -2330,14 +2225,14 @@ vector<graph> graph::project() {
 			for (const arithmetic::Parallel &term : action.terms) {
 				for (const arithmetic::Action &action : term.actions) {
 
-					if (isDisqualifyingItemInExpression(action.lvalue, varItemsLookup)) {
-						isDisqualifyingItemInExpression(action.lvalue, varItemsLookup, true);
+					if (isDisqualifyingItemInExpression(action.lvalue, varItems)) {
+						isDisqualifyingItemInExpression(action.lvalue, varItems, true);
 						disqualifyingItemFound = true;
 						break;
 					}
-					if (isDisqualifyingItemInExpression(action.rvalue, varItemsLookup)) {
+					if (isDisqualifyingItemInExpression(action.rvalue, varItems)) {
 						disqualifyingItemFound = true;
-						isDisqualifyingItemInExpression(action.rvalue, varItemsLookup, true);
+						isDisqualifyingItemInExpression(action.rvalue, varItems, true);
 						break;
 					}
 				}
@@ -2362,11 +2257,10 @@ vector<graph> graph::project() {
 			watchDog++;
 		}
 		//process.post_process(true, false);
-		process.reduce();
+		process.reduce(true, false, true);
 
 		processes.push_back(process);
 		cout << "extracted." << endl;
-		pid++;
 	}
 
 	cout << "projected." << endl;
