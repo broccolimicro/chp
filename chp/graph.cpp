@@ -12,7 +12,7 @@
 
 //TODO: delete after development
 #include <algorithm>
-#include <interpret_chp/export_dot.h>
+//#include <interpret_chp/export_dot.h>
 
 //TODO: nice. Now substitute them for readability [at least in graph::project()]. added to header.
 //typedef size_t TransitionIdx;
