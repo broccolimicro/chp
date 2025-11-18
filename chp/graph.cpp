@@ -484,6 +484,11 @@ vector<graph> graph::decompose() {  //chp::graph &g) {}
 	cout << endl << "\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
 	cout << "decomposing: " << this->name << endl;
 
+	if (transitions.count() == 0) {
+		cout << "decomposed." << endl;
+		return {*this};
+	}
+
 	this->convertToDSA();
 	this->computeUseDefChains();
 	vector<graph> processes = this->project();
@@ -996,14 +1001,14 @@ void graph::computeControlFlowGraph() {
 
 	// Find starting node & populate entry block
 	petri::iterator init_transition;
-	for (size_t transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
-		init_transition = petri::iterator(transition::type, transition_idx);
-		if (this->is_valid(init_transition)) {
+	for (petri::iterator i = this->begin(transition::type); i < this->end(transition::type); i++) {
+		if (is_valid(i)) {
+			init_transition = i;
 			break;
 		}
 	}
 
-	if (init_transition.index == -1) {
+	if (not init_transition.valid()) {
 		cout << "CFG is empty" << endl;
 		this->controlFlowGraphReady = true;
 		return;
