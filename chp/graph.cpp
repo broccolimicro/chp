@@ -67,25 +67,14 @@ transition::~transition()
 
 transition transition::merge(int composition, const transition &t0, const transition &t1) {
 	if (composition == petri::parallel or composition == petri::sequence) {
-		transition result(t0.guard & t1.guard, false);
-		for (int i = 0; i < (int)t0.action.terms.size(); i++) {
-			for (int j = 0; j < (int)t1.action.terms.size(); j++) {
-				result.action.terms.push_back(arithmetic::Parallel());
-				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t0.action.terms[i].actions.begin(), t0.action.terms[i].actions.end());
-				result.action.terms.back().actions.insert(result.action.terms.back().actions.end(), t1.action.terms[j].actions.begin(), t1.action.terms[j].actions.end());
-			}
-		}
+		transition result(t0.guard & t1.guard, t0.action & t1.action);
 		result.guard.minimize();
 		return result;
-
 	} else if (composition == petri::choice) {
-		transition result(t0.guard | t1.guard, false);
-		result.action.terms.insert(result.action.terms.end(), t0.action.terms.begin(), t0.action.terms.end());
-		result.action.terms.insert(result.action.terms.end(), t1.action.terms.begin(), t1.action.terms.end());
+		transition result(t0.guard | t1.guard, t0.action | t1.action);
 		result.guard.minimize();
 		return result;
 	}
-	//result.guard.minimize();
 	return transition();
 }
 
@@ -400,51 +389,9 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 		}
 	}
 
-	change = true;
+	/*change = true;
 	while (change) {
-		super::reduce(proper_nesting, aggressive);
-
-		// Remove skips
-		change = false;
-		for (petri::iterator i(transition::type, 0); i < (int)transitions.size() and not change; i++) {
-			if (not is_valid(i)) continue;
-
-			if (transitions[i.index].is_vacuous()) {
-				vector<petri::iterator> n = next(i); // places
-				if (n.size() > 1) {
-					//cout << "removing skip T" << i.index << ": " << transitions[i.index].guard << "->" << transitions[i.index].action << endl;
-					vector<petri::iterator> p = prev(i); // places
-					vector<vector<petri::iterator> > pp;
-					for (int j = 0; j < (int)p.size(); j++) {
-						pp.push_back(prev(p[j]));
-					}
-
-					for (int k = (int)arcs[petri::transition::type].size()-1; k >= 0; k--) {
-						if (arcs[petri::transition::type][k].from == i) {
-							erase_arc(petri::iterator(petri::transition::type, k));
-						}
-					}
-
-					vector<petri::iterator> copies;
-					copies.push_back(i);
-					for (int k = 0; k < (int)n.size(); k++) {
-						if (k > 0) {
-							copies.push_back(copy(i));
-							for (int l = 0; l < (int)p.size(); l++) {
-								petri::iterator x = copy(p[l]);
-								connect(pp[l], x);
-								connect(x, copies.back());
-							}
-						}
-						connect(copies.back(), n[k]);
-					}
-					//cout << "removed skip" << endl;
-					change = true;
-				}
-			}
-		}
-		if (change)
-			continue;
+		super::reduce(proper_nesting, aggressive);*/
 
 		// If there is a guard at the end of a conditional branch, then we unzip
 		// the conditional merge by one transition (make copies of the next
@@ -528,8 +475,8 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 		}
 		if (change) {
 			continue;
-		}*/
-	}
+		}
+	}*/
 }
 
 vector<graph> graph::decompose() {  //chp::graph &g) {}
