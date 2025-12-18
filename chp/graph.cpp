@@ -18,6 +18,9 @@
 //typedef size_t TransitionIdx;
 //typedef size_t VarIdx;
 
+#define MAX_DSA_ITERATION 128  // a low ceiling until we support loops in DSA form
+#define MAX_PROCESS_COUNT 64
+
 using arithmetic::Expression;
 
 namespace chp
@@ -28,10 +31,7 @@ place::place()
 	arbiter = false;
 }
 
-place::~place()
-{
-
-}
+place::~place() {}
 
 // Merge two places and combine the predicate and effective predicate.
 // composition can be one of:
@@ -60,10 +60,7 @@ transition::transition(arithmetic::Expression guard, arithmetic::Choice assign) 
 	this->action = assign;
 }
 
-transition::~transition()
-{
-
-}
+transition::~transition() {}
 
 transition transition::merge(int composition, const transition &t0, const transition &t1) {
 	if (composition == petri::parallel or composition == petri::sequence) {
@@ -107,17 +104,11 @@ variable::variable(string name, int region) {
 	this->region = region;
 }
 
-variable::~variable() {
-}
+variable::~variable() {}
 
-graph::graph()
-{
-}
+graph::graph() {}
 
-graph::~graph()
-{
-
-}
+graph::~graph() {}
 
 /**
  * @brief Find or create a net with the given name and region
@@ -478,6 +469,83 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 		}
 	}*/
 }
+
+//
+// Render init sequence of assignments if they exist
+//TODO: migrate this upstream where? ...all the way to petri::graph constructor? nah, but interpret_chp/import_cog.cpp::import_cog(...)?
+//
+void graph::renderReset() {
+	//TODO: make method idempotent
+	//bool isResetRendered = false;
+
+	// First, find the entry point(s) to follow the reset
+	//TODONE: ah, do I want to grab a handle through thte reset tokens instead? If there are multiple, shouldn't I need to attach this sequence to all of them via parallel splits
+	//TODO: properly support multiple reset-states
+	vector<petri::iterator> entryIts;
+	for (const chp::state &resetState : this->reset) {
+		for (const petri::token &token : resetState.tokens) {
+			entryIts.push_back(petri::iterator(petri::place::type, token.index));
+		}
+	}
+
+
+	//petri::iterator entryIt;
+	//bool entryFound = false;
+	//for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
+	//	petri::iterator t_it(transition::type, transitionIdx);
+
+	//	if (this->is_valid(t_it)) {
+	//		entryFound = true;
+	//		entryIt = t_it;
+	//		break;
+	//	}
+	//}
+	//if (not entryFound) { return; } //TODO: perhaps in this case, the reset is all there is ...but then there's no channel I/O, so is there a point?? desired side-effects? at least convenient virtual metadata to preserve at least for compile-time?
+
+	// Unpack initialization assignments hiding in petri::graph's reset metadata
+	chp::state newResetState;
+	petri::iterator newHeadIt;
+	for (const chp::state &resetState : this->reset) {  //TODO: properly support multiple reset states
+		size_t varIdx = 0;
+		for (const arithmetic::Value &varReset : resetState.encodings.values) {
+			if (varReset.state != arithmetic::Value::StateType::VALID) { continue; }
+
+			string varName = this->vars[varIdx].name;
+			size_t initValue = varReset.ival;
+			cout << "reset> " << varName << " := " << std::to_string(initValue) << endl;
+
+			arithmetic::Action varInit(
+					arithmetic::Expression::varOf(varIdx),
+					arithmetic::Expression::intOf(initValue));
+			chp::transition varInitTransition(
+					arithmetic::Expression::vdd(), arithmetic::Choice({{varInit}}));
+			//this->super::insert_before(entryIt, varInitTransition);
+
+			if (newHeadIt.index == -1) {
+				petri::iterator newResetIt = this->super::create(chp::place());
+				newResetState.tokens.push_back(newResetIt.index);
+				petri::iterator varInitIt = this->super::create(varInitTransition);
+				this->connect(newResetIt, varInitIt);  // order matters (e.g. redefinitions like "a=2;b=a*3;a=b+5")
+				
+				for (petri::iterator entryIt : entryIts) {
+					this->connect(varInitIt, entryIt);
+				}
+				newHeadIt = varInitIt;
+
+				varIdx++;
+				continue;
+			}
+
+			//TODO: does order matter? yes, for redefs (a=2;b=a*3;a=b+5)
+			//TODO: parallelize these as much as possible
+			newHeadIt = this->super::insert_after(newHeadIt, varInitTransition);
+			varIdx++;
+		}
+	}
+
+	this->reset = {newResetState};
+}
+
 
 vector<graph> graph::decompose() {  //chp::graph &g) {}
 	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
@@ -999,30 +1067,55 @@ arithmetic::Expression graph::exclusion(int index) const {
 void graph::computeControlFlowGraph() {
 	this->controlFlowGraphReady = false;
 
-	// Find starting node & populate entry block
-	petri::iterator init_transition;
-	for (petri::iterator i = this->begin(transition::type); i < this->end(transition::type); i++) {
-		if (is_valid(i)) {
-			init_transition = i;
-			break;
-		}
-	}
+	////// Find starting node & populate entry block
+	////petri::iterator init_transition;
+	////for (petri::iterator i = this->begin(transition::type); i < this->end(transition::type); i++) {
+	////	if (this->is_valid(i)) {
+	////		init_transition = i;
+	////		break;
+	////	}
+	////}
 
-	if (not init_transition.valid()) {
-		cout << "CFG is empty" << endl;
+	////if (not init_transition.valid()) {
+	////	clog << "CFG is empty" << endl;
+	////	this->controlFlowGraphReady = true;
+	////	return;
+	////}
+
+	// Populate initial block w/ embedded reset states
+	//TODO: Should we expect unmarked, reset-less graphs? Possibly as malformed artifacts from failing Process Decomposition
+	if (this->reset.empty()) {
+		clog << "No reset detected!" << endl;
 		this->controlFlowGraphReady = true;
 		return;
 	}
 
-	// Populate initial block
-	chp::graph::controlFlowBlock current_block(
-			0,
-			{},
-			{},
-			init_transition,
-			init_transition,
-			{});
-	this->controlFlowGraph.push_back(current_block);
+	//// Find one of any "initial transitions" pointed to by place(s) marked for reset
+	//const petri::token &resetVar = resetState.tokens[0];
+	//petri::iterator resetPlace(petri::place::type, resetVar.index);
+	//// Use any initial transition to spawn crawl
+	//TransitionIdx oneResetTransitionIdx = this->next(resetPlace)[0].index;
+	//petri::iterator oneResetTransition(petri::transition::type, oneResetTransitionIdx);
+
+	// Find all "initial transitions" pointed to by place(s) marked for reset
+	//const chp::state &resetState = this->reset[0];
+	set<petri::iterator> resetTransitions;
+	for (chp::state &resetState : this->reset) {
+		for (const petri::token &resetVar : resetState.tokens) {
+			petri::iterator resetPlace(petri::place::type, resetVar.index);
+
+			for (petri::iterator resetTransition : this->next(resetPlace)) {
+				resetTransitions.insert(resetTransition);
+			}
+		}
+	}
+
+	// Create initial CFG block w/ reset definitions
+	petri::iterator oneResetTransition = *resetTransitions.begin();
+	chp::graph::controlFlowBlock resetBlock(0, true, {oneResetTransition});
+	//TODO: Now insert proper init block for reset encodings/values with outs & analysis metadata pre-populated for worklist? (e.g. outs, gens, postDefs)
+	//TODO: aha, sufficient just to insert as preDefs to this one? or will we need a true, empty "init" block like in the compiler literature (dragon book)?
+	this->controlFlowGraph.push_back(resetBlock);
 
 	// Crawl transitions breadth-first to cluster into Control-Flow Graph blocks
 	//   with path-tracking to uncover most-relevant "Reaching Definitions"
@@ -1030,7 +1123,7 @@ void graph::computeControlFlowGraph() {
 	vector<petri::iterator> current_path;  // Full path to current node, including current node
 	std::queue<vector<petri::iterator>> queue;
 	std::set<petri::iterator> visited;
-	queue.push({init_transition});
+	queue.push({oneResetTransition});
 
 	while (not queue.empty()) {
 		vector<petri::iterator> current_path = queue.front();
@@ -1075,7 +1168,7 @@ void graph::computeControlFlowGraph() {
 			bool already_in_block = this->transitionToBlock.contains(next_transition_it.index);
 			if (already_in_block) {
 				size_t next_block_uid = this->transitionToBlock[next_transition_it.index];
-				if (next_block_uid == 0) { continue; }  //TODO: remove hack after testing. This cut unrolls the unconiditional loopback from program end-to-beginning for repetition-intolerant DSA enumeration. Once nested repetitions are supported, this can go.
+				//if (next_block_uid == 0) { continue; }  //TODO: remove hack after testing. This cut unrolls the unconiditional loopback from program end-to-beginning for repetition-intolerant DSA enumeration. Once nested repetitions are supported, this can go.
 				this->controlFlowGraph[next_block_uid].ins.insert(current_block.uid);
 				this->controlFlowGraph[current_block.uid].outs.insert(next_block_uid);
 				continue;
@@ -1098,11 +1191,9 @@ void graph::computeControlFlowGraph() {
 				size_t new_block_uid = this->controlFlowGraph.size();
 				chp::graph::controlFlowBlock new_block(
 						new_block_uid,
-						{current_block.uid},
-						{},
-						next_transition_it,
-						next_transition_it,
-						{next_transition_it});
+						(resetTransitions.contains(next_transition_it)),
+						{next_transition_it},
+						{current_block.uid});
 				this->controlFlowGraph.push_back(new_block);
 				this->transitionToBlock[next_transition_it.index] = new_block_uid;
 				this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
@@ -1113,7 +1204,7 @@ void graph::computeControlFlowGraph() {
 			}
 
 			// Default-case (sequence): Append to current block
-			this->controlFlowGraph[current_block_uid].last = next_transition_it;
+			//this->controlFlowGraph[current_block_uid].last = next_transition_it;
 			this->controlFlowGraph[current_block_uid].transitions.push_back(next_transition_it);
 			this->transitionToBlock[next_transition_it.index] = current_block.uid;
 
@@ -1143,11 +1234,9 @@ void graph::computeControlFlowGraph() {
 			size_t new_block_uid = this->controlFlowGraph.size();
 			chp::graph::controlFlowBlock new_block(
 					new_block_uid,
-					{current_block.uid},
-					{},
-					next_transition_it,
-					next_transition_it,
-					{next_transition_it});
+					(resetTransitions.contains(next_transition_it)),
+					{next_transition_it},
+					{current_block.uid});
 			this->controlFlowGraph.push_back(new_block);
 			this->transitionToBlock[next_transition_it.index] = new_block_uid;
 			this->controlFlowGraph[current_block.uid].outs.insert(new_block_uid);
@@ -1174,12 +1263,12 @@ void graph::setUseDef(size_t chp_var_idx, size_t transition_idx, bool is_definit
 	if (is_definition) {
 		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
 		//this->defs[chp_var_name].push_back(transition_idx);
-		cout << "DEF " << chp_var_name << " @ " << transition_idx << endl;
+		clog << "DEF " << chp_var_name << " @ " << transition_idx << endl;
 
 	} else {
 		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
 		//this->uses[chp_var_name].push_back(transition_idx);
-		cout << "use " << chp_var_name << " @ " << transition_idx << endl;
+		clog << "use " << chp_var_name << " @ " << transition_idx << endl;
 	}
 }
 
@@ -1253,7 +1342,7 @@ pair<int, vector<size_t>> graph::getPreviousDefinitions(petri::iterator transiti
 	}
 
 	if (not is_assignment) {
-		cout << "===> " << transition_it.index << ": N/A" << endl;
+		clog << "===> " << transition_it.index << ": N/A" << endl;
 		return pair<int, vector<size_t>>(-1, {});
 	}
 
@@ -1277,9 +1366,9 @@ pair<int, vector<size_t>> graph::getPreviousDefinitions(petri::iterator transiti
 	}
 
 	// The last transition in the return vector just got redefined, so "kill" it in the containing block
-	cout << "===> " << transition_it.index << ": ";
-	std::copy(prev_defs.begin(), prev_defs.end(), ostream_iterator<size_t>(std::cout, ", "));
-	cout << endl;
+	clog << "===> " << transition_it.index << ": ";
+	std::copy(prev_defs.begin(), prev_defs.end(), ostream_iterator<size_t>(std::clog, ", "));
+	clog << endl;
 	return pair<int, vector<size_t>>(var_assigned, prev_defs);
 }
 
@@ -1291,7 +1380,7 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 	string varName = this->vars[varIdx].name;
 	size_t dsaCountBefore = block.postDefs[varIdx];
 
-	cout << " TODO: B[" << blockIdx << "] << " << varName << "_" << dsaCountAfter << " := " << varName << "_" << dsaCountBefore << endl;
+	clog << " TODO: B[" << blockIdx << "] << " << varName << "_" << dsaCountAfter << " := " << varName << "_" << dsaCountBefore << endl;
 
 	// First, clip block-exiting arc
 	petri::iterator tailTransitionIt = block.transitions.back();
@@ -1301,7 +1390,7 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 	petri::iterator mergePlace = this->next(tailTransitionIt)[0];
 	petri::iterator outboundArc = this->arc_between(tailTransitionIt, mergePlace);
 	//TODO: verify arc returned is valid: if (outboundArc == petri::iterator()) { cerr << endl; }
-	cout << " :: " << outboundArc << endl;
+	clog << " :: " << outboundArc << endl;
 
 
 	// Insert new "v_new := v_old;" copy-assignment at the end of the block
@@ -1319,14 +1408,14 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 
 	// Insert copy-assignment after the block's last transition
 	this->super::erase_arc(outboundArc);
-	this->super::mark_modified();  //TODO: required by petri? not used in insert_after...
+	//this->super::mark_modified();  //TODO: required by petri? not used in insert_after...
 
 	petri::iterator newCopyAssignmentTransitionIt(petri::transition::type, newTransitionIdx);
 	this->super::connect(newCopyAssignmentTransitionIt, mergePlace);
 	this->super::connect(tailTransitionIt, newCopyAssignmentTransitionIt);
 
 	block.transitions.push_back(newCopyAssignmentTransitionIt);
-	block.last = newCopyAssignmentTransitionIt;
+	//block.last = newCopyAssignmentTransitionIt;
 	block.gens[newTransitionIdx] = postVarIdx;
 	block.postDefs[postVarIdx] = dsaCountAfter;
 }
@@ -1359,7 +1448,7 @@ unordered_map<size_t, size_t> graph::mergeDefinitionsBeforeBlock(size_t blockId)
 		size_t deepestBlock = maxIt->first;
 		size_t maxIndex = maxIt->second;
 		liveDefinitions[varIdx] = maxIndex;
-		cout << "*** " << this->vars[varIdx].name << "[" << deepestBlock << "]: " << maxIndex << endl;
+		clog << "*** " << this->vars[varIdx].name << "[" << deepestBlock << "]: " << maxIndex << endl;
 
 		// Synchronize any input block postDefs that fell behind peers
 		// by appending a copy-assignment to the new max
@@ -1382,19 +1471,20 @@ size_t graph::getEnumeratedVar(size_t varIdx, size_t num, string delimiter) {
 		enumeratedVarIdx = this->vars.size();
 
 		chp::variable enumeratedVar(enumeratedName);
-		this->vars.push_back(enumeratedVar);
+		this->create(enumeratedVar);
+		//TODO: consider multiple isochronic regions (e.g. populating .remote's)
 	}
 
 	return enumeratedVarIdx;
 }
 
 void _debugPrint(queue<size_t> s) {
-	cout << ">> ";
+	clog << ">> ";
 	while (!s.empty()) {
-		cout << s.front() << " ";
+		clog << s.front() << " ";
 		s.pop();
 	}
-	cout << endl;
+	clog << endl;
 }
 
 void graph::convertToDSA() {
@@ -1407,6 +1497,7 @@ void graph::convertToDSA() {
 	//for (auto blockIt = this->controlFlowGraph.begin(); blockIt != this->controlFlowGraph.end(); ++blockIt) {
 	//	worklist.push(blockIt->uid);  // Populate stack with first element at the top
 	//}
+	//TODO: empty should just be an early-out?
 	if (not this->controlFlowGraph.empty()) {
 		worklist.push(this->controlFlowGraph[0].uid);
 	}
@@ -1415,18 +1506,97 @@ void graph::convertToDSA() {
 	while (not worklist.empty()) {
 		workCount++;
 
-		cout << endl;
+		clog << endl;
 		_debugPrint(worklist);
+
+		//TODO: remove watchdog once we support loops with DSA form
+		if (workCount > MAX_DSA_ITERATION) {
+			cerr << "worklist watchdog Woof!" << endl;
+			break;
+		}
 
 		size_t blockId = worklist.front();
 		worklist.pop();
 		controlFlowBlock &block = this->controlFlowGraph[blockId];
 
-		cout << "-=-=-=-=-=-=-=-=-=-=-=-=- " << workCount << " <><> " << blockId << endl;
+		clog << "-=-=-=-=-=-=-=-=-=-=-=-=- " << workCount << " <><> " << blockId << endl;
 
 		// Populate pre- definitions based on in-blocks
 		unordered_map<size_t, size_t> liveDefinitions = this->mergeDefinitionsBeforeBlock(blockId);
-		block.preDefs = liveDefinitions;
+
+		// If this is a reset block w/ preDefs now higher than postDefs, we've encountered a program repetition
+		//   where we need to resynchronize DSA indices, so that we don't infinitely increment loop variables
+		//if (this->reset.empty()) { break; } //TODO: do we need to reverify this->reset isn't empty?
+		if (block.reset and (not block.transitions.empty())) {
+			//TODO: RETVRN HERE
+			// so if we notice an enumerated var from the in's postDefs that has advanced past any of our preDefs
+			//   (assuming this in-block is not an init-reset block, for now)
+			//   then we should insert our appropriate copy-assignment
+			//   ideally, we should re-use & overwrite previous copy-assignments if we can see they already exist
+			//   actually, this shouldn't be a problem, since this should only synchronize once and postDefs should remain the same!
+
+			// Have we come full circle, passing this reset block again? //TODO: limit this if-clause predicate to only second+ passes
+			// If so, have any external pre-loop variables been redefined inside this loop (in/after this block)?
+			// Find external pre-loop variables that need to be synchronized with their end-of-loop DSA indices
+			for (auto [varIdx, newDsaCount] : liveDefinitions) {
+				size_t oldDsaCount = block.preDefs[varIdx]; //TODO: what if var is entirely local/enclosed within loop? i.e. ONLY defined first in this loop (e.g. not in reset)?
+				if (newDsaCount <= oldDsaCount) { continue; }
+
+				// Ignore variables that aren't in reset. Synchronize only EXTERNALLY-DEFINED vars from pre-loop
+				//TODO: see `countdown` kernel, do NOT assume programmer correctly set reset value, even if one should be needed/expected
+				if ((varIdx + 1 > this->vars.size()) or (varIdx + 1 > this->reset[0].encodings.values.size())) { continue; }
+				arithmetic::Value &resetVal = this->reset[0].encodings.values[varIdx];
+				if (resetVal.state == arithmetic::Value::StateType::UNKNOWN) { continue; }
+
+				//TODO: what about variables that WEREN'T yet in preDefs? e.g. not defined before this block & only detected post-loop
+				//TODO: ?? make it OKAY for loop/reset blocks to have a higher preDef than postDef? This seems like the edge-case where preDef indices shouldn't force postDef.
+				//TODO:      aHA, do the copy-assignment insertion HERE (maybe even update the preDefs) but just DON'T propagate the higher preDefs into liveDefinitions when doing the copy-assignment. So 
+				//     so just don't update ...or manually degrade the liveDefinition back down where it should be. nice. Ensure the liveDefinition updates are IDEMPOTENT throughout the second+ passes
+
+				// Insert copy-assignment to internalize & synchronize DSA index for loop-begin DSA w/ loop-end
+				arithmetic::Action loopCopyAssignment;
+				VarIdx preLoopVarIdx = this->getEnumeratedVar(varIdx, oldDsaCount);
+				VarIdx postLoopVarIdx = this->getEnumeratedVar(varIdx, newDsaCount);
+				loopCopyAssignment.lvalue = arithmetic::Expression::varOf(preLoopVarIdx);
+				loopCopyAssignment.rvalue = arithmetic::Expression::varOf(postLoopVarIdx);
+
+				chp::transition loopCopyAssignmentTransition(
+						arithmetic::Expression::vdd(), arithmetic::Choice({{loopCopyAssignment}}));
+				petri::iterator loopsFirstTransitionIt = block.transitions.front();
+				petri::iterator loopCopyAssignmentTransitionIt = this->super::insert_before(loopsFirstTransitionIt, loopCopyAssignmentTransition);
+
+				block.transitions.insert(block.transitions.begin(), loopCopyAssignmentTransitionIt);
+				//TODO: do I update gens/kills metadata?
+				//TODO: should this be the OG variable or initial DSA-enumerated var_0/1?
+				TransitionIdx loopCopyAssignmentTransitionIdx = loopCopyAssignmentTransitionIt.index;
+				block.gens[loopCopyAssignmentTransitionIdx] = varIdx;
+				liveDefinitions[varIdx] = 0;
+
+
+				////TODO: ugh, I should re-use petri/graph.h::insert_after
+				//chp::transition newCopyAssignmentTransition(
+				//		arithmetic::Expression::vdd(), arithmetic::Choice({{newCopyAssignment}}));
+				//size_t newTransitionIdx = this->transitions.insert(newCopyAssignmentTransition);
+
+				//TODO: verify it works around AND/OR structures
+			
+				//TODO: RETVRN HERE
+				//...
+				//TODO: lastly, update graph's reset token encodings with new DSA index too!
+				//TODO: first I have to CREATE this new Value for this new var in the encodings.values, THEN I toggle the validity of the old one
+				arithmetic::Reference oldResetValRef(varIdx); //TODO: ah, this is just changing the VALUE ...
+				arithmetic::Value newResetVal(resetVal.ival);
+				this->reset[0].encodings.set(oldResetValRef, newResetVal, true); //TODO: false? what is define?
+				//TODO: crap, do I need to extend the reset list or just rename the apparent "name" of this var?
+				//  I feel like this definitely involves rendering the toggling the old var into a state of UNKNOWN
+				//  & introducing all the new vars appended to the this->vars lists from DSA enumerations into the reset, whereby THIS enum'd one becomes ACTIVE
+			}
+
+			//...
+			//TODO: once complete, test for success by verifying worklist converges on counter [when we rip-out the phi crutches]!
+		}
+		block.preDefs = liveDefinitions; //TODO: careful to not overwrite down-managed resetVars now internalized
+		//TODO: aHA, 
 
 		// Enumerate block-internal vars in DSA form
 		unordered_map<size_t, vector<vector<size_t>>> blockVarIndices; // var -> transition_idxs vector [def] of vectors[uses]
@@ -1449,7 +1619,7 @@ void graph::convertToDSA() {
 			}
 
 			if (not liveDefinitions.empty()) {
-				//std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){ cout << this->vars[d.first].name << "[" << d.second << "], "; }); cout << endl;
+				//std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){ clog << this->vars[d.first].name << "[" << d.second << "], "; }); clog << endl;
 
 				// Enumerate current expression w/ DSA indices
 				Mapping<size_t> postDefIndices(std::numeric_limits<size_t>::max(), true);
@@ -1479,18 +1649,19 @@ void graph::convertToDSA() {
 				}
 
 			} else {
-				cout << "umpty-dumpty" << endl;
+				clog << "umpty-dumpty" << endl;
 			}
-			//cout << "L>> " << transitionIt.lvalue << endl;
-			//cout << "R>> " << transitionIt.rvalue << endl;
+			//clog << "L>> " << transitionIt.lvalue << endl;
+			//clog << "R>> " << transitionIt.rvalue << endl;
 		}
 
-		// Populate post-definitions based on local transformations, if any occurred
-		//TODO: block.postPef = transfer(blockId, block.preDefs) // b.gen u (b.predef - b.kill)
+		// Update post-definitions, if local transformations came out differently this time
+		// NOTE: if local transformations are deterministic, wouldn't this be equivalent to "were pre-Defs different from last time?"
+		// NOTE: for theoretical reference, block.postPef := transfer(blockId, block.preDefs) // b.gen u (b.predef - b.kill)
 		if (liveDefinitions != block.postDefs) {
 			std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){
-				cout << this->vars[d.first].name << "[" << d.second << "], "; });
-			cout << endl;
+				clog << this->vars[d.first].name << "[" << d.second << "], "; });
+			clog << endl;
 			block.postDefs = liveDefinitions;
 
 			for (const size_t &out : block.outs) {
@@ -1499,7 +1670,7 @@ void graph::convertToDSA() {
 		}
 	}
 
-	cout << "DSA'd." << endl;
+	clog << "DSA'd." << endl;
 }
 
 vector<size_t> getVarsFromExpression(const arithmetic::Expression &e) {
@@ -1621,7 +1792,7 @@ vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 //	useDefChain &varUseDefChain = this->useDefChains[preVar];
 //	if (varUseDefChain.defs.empty()) { continue; }
 //	size_t insertionTransitionIdx = varUseDefChain.defs[0];
-//	//cout << this->transitions[insertionTransitionIdx] << endl;
+//	//clog << this->transitions[insertionTransitionIdx] << endl;
 //
 //	petri::iterator insertionPoint(petri::transition::type, insertionTransitionIdx);
 //	return this->super::insert_after(insertionPoint, renameTransition);
@@ -1669,10 +1840,10 @@ bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionIt
 	vector<ProjectionItem> sharedItems;
 	std::ranges::set_difference(exprItems, items, std::back_inserter(sharedItems));
 	if (debug) {
-		cout << "found: ";
-		std::for_each(sharedItems.begin(), sharedItems.end(), [](const ProjectionItem &item) { cout << item << ", "; });
-		cout << "  ...in " << e;
-		cout << endl;
+		clog << "found: ";
+		std::for_each(sharedItems.begin(), sharedItems.end(), [](const ProjectionItem &item) { clog << item << ", "; });
+		clog << "  ...in " << e;
+		clog << endl;
 	}
 	return not sharedItems.empty();
 }
@@ -1680,7 +1851,7 @@ bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionIt
 
 // Data-driven Decomposition
 vector<graph> graph::project() {
-	cout << endl << "projecting." << endl;
+	clog << endl << "projecting." << endl;
 
 	unordered_map<VarIdx, vector<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
 	set<VarIdx> inputChannels, outputChannels;
@@ -1737,7 +1908,7 @@ vector<graph> graph::project() {
 
 					VarIdx outputChannel = outputChannelsUsed[0]; //TODO: support more than one outputChannel per transition
 					outputChannels.insert(outputChannel);
-					cout << " ! CHAN<" << this->vars[outputChannel].name << ">" << endl;
+					clog << " ! CHAN<" << this->vars[outputChannel].name << ">" << endl;
 
 					// Prune redundant self from right-hand side
 					rightVars.erase(std::remove(rightVars.begin(), rightVars.end(), outputChannel), rightVars.end());
@@ -1786,7 +1957,7 @@ vector<graph> graph::project() {
 		for (VarIdx dependency : dependencies) {
 			if (not dependencySets.contains(dependency)) {
 				inputChannels.insert(dependency);
-				cout << " ? CHAN<" << this->vars[dependency].name << ">" << endl;
+				clog << " ? CHAN<" << this->vars[dependency].name << ">" << endl;
 			}
 		}
 	}
@@ -1804,18 +1975,18 @@ vector<graph> graph::project() {
 	//}
 
 	//TODO: print & dehug/verify useDefChains again
-	cout << " ~~> ~~> ~~> " << endl;
+	clog << " ~~> ~~> ~~> " << endl;
 	std::for_each(dependencySets.begin(), dependencySets.end(), [this](auto &dep) {
-			cout << this->vars[dep.first].name << " <- ";
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
-			cout << endl;
+			clog << this->vars[dep.first].name << " <- ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
+			clog << endl;
 			});
 
 	//TODO: verify Dependency Sets & ensure only channel-Sends are included
 	//TODO: this is a great test suite to write
-	cout << " ~> ~> ~> ";
-	for (auto &[varIdx,v] : dependencySets) { cout << this->vars[varIdx].name << " "; }
-	cout << endl;
+	clog << " ~> ~> ~> ";
+	for (auto &[varIdx,v] : dependencySets) { clog << this->vars[varIdx].name << " "; }
+	clog << endl;
 
 
 	//
@@ -1840,17 +2011,17 @@ vector<graph> graph::project() {
 		}
 	}
 
-	cout << " <~~ <~~ <~~ " << endl;
+	clog << " <~~ <~~ <~~ " << endl;
 	std::for_each(invertedDependencySet.begin(), invertedDependencySet.end(), [this](auto &dep) {
-			cout << this->vars[dep.first].name << " <- ";
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
-			cout << endl;
+			clog << this->vars[dep.first].name << " <- ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
+			clog << endl;
 			});
 
 	// Identify multi-use variables that need a copy process to fork their dataflow
 	for (auto const &[dependency, users] : invertedDependencySet) {
 		size_t useCount = users.size();
-		//cout << " __ " << this->vars[dependency].name << ": " << useCount
+		//clog << " __ " << this->vars[dependency].name << ": " << useCount
 		//	<< ((useCount > 1) ? "!" : "") << endl;
 		if (useCount < 2) { continue; }
 
@@ -1872,7 +2043,7 @@ vector<graph> graph::project() {
 		if (dependencyUseDefChain.defs.empty()) { continue; }
 
 		size_t defTransitionIdx = dependencyUseDefChain.defs[0];
-		////cout << this->transitions[defTransitionIdx] << endl;
+		////clog << this->transitions[defTransitionIdx] << endl;
 		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
 		//petri::iterator forkAssignmentIt = this->super::insert_after(defTransitionIt, forkAssignmentTransition);
 		////TODO: append useDef after inserting new assignment? nah
@@ -1883,13 +2054,13 @@ vector<graph> graph::project() {
 		// Insert "this.guard -> CHAN.send(x); x_fork := CHAN.recv()"
 		VarIdx forkChannelIdx = this->getEnumeratedVar(dependency, 0, "_FORK_CHAN");
 		//projectionSets[dependency].push_back(varForkIdx); //TODO: be careful of renamed x vs x_fork which I'm still ambiguous what I prefer, but I've already remapped everywhere to x_fork wherever appropriate
-		cout << endl << "++ " << forkChannelIdx << endl;
+		clog << endl << "++ " << forkChannelIdx << endl;
 
 		Expression channelSendExpr = arithmetic::call(
 				"send",
 				{Expression::varOf(forkChannelIdx), Expression::varOf(dependency)} //nope, varForkIdx//TODO: nope, now... dependency//varForkIdx
 				);
-		cout << "++ +  +> " << channelSendExpr << endl;
+		clog << "++ +  +> " << channelSendExpr << endl;
 		arithmetic::Action forkSend(Expression::undef(), channelSendExpr);
 		Expression guard = this->transitions[defTransitionIdx].guard;
 		chp::transition forkSendTransition(guard, arithmetic::Choice({{forkSend}}));
@@ -1901,7 +2072,7 @@ vector<graph> graph::project() {
 
 		//TODO: make all other arithmetic::Action constructors more legible like this? ... ugh, now too dense, but still somewhat better (ah, use namespaces)
 		Expression channelRecvExpr = arithmetic::call("recv", {Expression::varOf(forkChannelIdx)});
-		cout << "++ +  <+ " << channelRecvExpr << endl;
+		clog << "++ +  <+ " << channelRecvExpr << endl;
 		arithmetic::Action forkRecv(Expression::varOf(varForkIdx), channelRecvExpr);
 		chp::transition forkRecvTransition(Expression::vdd(), arithmetic::Choice({{forkRecv}}));
 
@@ -1924,7 +2095,7 @@ vector<graph> graph::project() {
 		for (VarIdx user : users) {
 			//for (TransitionIdx dependencyUseTransition : dependencyUseDefChain.uses)
 			//VarIdx varCopyIdx = this->getEnumeratedVar(dependency, copyCount, "_branch");
-			//cout << "^%$ " << this->vars[varCopyIdx].name << endl;
+			//clog << "^%$ " << this->vars[varCopyIdx].name << endl;
 
 			//// Insert the "x_cp_n := x_fork" copies
 			//arithmetic::Action branchAssignment;
@@ -1951,10 +2122,14 @@ vector<graph> graph::project() {
 			//	}
 			//}
 
-
+			//TODO: RETVRN HERE: dependencyUseDefChain.uses (foreach : ) { } users VarIdx vs uses TransitionIdx?
+			//TODO: what I WANT is a transitionIdx TO this user ...are they 1:1, the users & uses?
+			// Perhaps I should be referencing the TransitionIdx's first, since the VarIdx can be derived from the other
+			//That "dependencyUseChain" handle was always an awkward retrofit to this algo anyways
+			//auto _ = transitionToBlock();
 
 			// Insert "CHAN.send(x_fork); x_usage_n = CHAN.recv()" internal-communication channels in-place of assignment
-			cout << endl << "\\/\\/\\/\\/\\/ multi-dep" << endl;
+			clog << endl << "\\/\\/\\/\\/\\/ multi-dep" << endl;
 			//useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
 			//if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
 			//TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
@@ -1980,8 +2155,8 @@ vector<graph> graph::project() {
 			this->super::connect(forkRecvTransitionIt, branchHeadIt);
 
 
-			cout << endl << "++ " << channelIdx << endl;
-			cout << "++ +  +> " << channelSendExpr << endl;
+			clog << endl << "++ " << channelIdx << endl;
+			clog << "++ +  +> " << channelSendExpr << endl;
 			petri::iterator branchSendTransitionIt = this->super::insert_after(branchHeadIt, branchSendTransition);
 			projectionSets[varForkIdx].push_back(ProjectionItem(channelIdx, true, true));
 			channelSends[varForkIdx].push_back(channelIdx);
@@ -1998,7 +2173,7 @@ vector<graph> graph::project() {
 			chp::transition branchRecvTransition(
 					arithmetic::Expression::vdd(), arithmetic::Choice({{usageRecv}}));
 
-			cout << "++ +  <+ " << channelRecvExpr << endl;
+			clog << "++ +  <+ " << channelRecvExpr << endl;
 
 			petri::iterator branchRecvTransitionIt = this->super::insert_after(branchSendTransitionIt, branchRecvTransition);
 			petri::iterator branchTailIt = this->next(branchRecvTransitionIt)[0];
@@ -2039,7 +2214,7 @@ vector<graph> graph::project() {
 		}
 
 		this->super::erase(originalUmbilicalCordIt);
-		cout << endl;
+		clog << endl;
 	}
 
 
@@ -2047,14 +2222,14 @@ vector<graph> graph::project() {
 	//TODO: rename "targt, dependencies" now that it's an INVERTED dependency set. More like "dependency, users"
 	for (auto const &[dependency, users] : invertedDependencySet) {
 		size_t useCount = users.size();  //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
-		cout << " __ " << this->vars[dependency].name << ": " << useCount
+		clog << " __ " << this->vars[dependency].name << ": " << useCount
 			<< ((useCount > 1) ? "!" : "") << endl;
 		if (useCount != 1) { continue; }
 		VarIdx user = *users.begin(); //users[0];
 
 
 		// Insert "CHAN.send(x); x_usage_n = CHAN.recv()" after definition
-		cout << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ single-dep R7->8" << endl;
+		clog << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ single-dep R7->8" << endl;
 		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
 		if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
 
@@ -2073,8 +2248,8 @@ vector<graph> graph::project() {
 		chp::transition internalSendTransition(
 				arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
 
-		cout << endl << "++ " << channelIdx << endl;
-		cout << "++ +  +> " << channelSendExpr << endl;
+		clog << endl << "++ " << channelIdx << endl;
+		clog << "++ +  +> " << channelSendExpr << endl;
 		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
 		projectionSets[dependency].push_back(ProjectionItem(channelIdx, true, true));
 		channelSends[dependency].push_back(channelIdx);
@@ -2091,7 +2266,7 @@ vector<graph> graph::project() {
 		chp::transition internalRecvTransition(
 				arithmetic::Expression::vdd(), arithmetic::Choice({{usageRecv}}));
 
-		cout << "++ +  <+ " << channelRecvExpr << endl;
+		clog << "++ +  <+ " << channelRecvExpr << endl;
 
 		petri::iterator umbilicalCordIt = this->super::insert_after(internalSendTransitionIt, chp::transition());
 		umbilicalCords.insert(umbilicalCordIt);
@@ -2130,22 +2305,22 @@ vector<graph> graph::project() {
 	}
 
 
-	cout << endl << "  # ## ### < PS> ### ## #  " << endl;
+	clog << endl << "  # ## ### < PS> ### ## #  " << endl;
 	auto toString = [this](const ProjectionItem &p) -> string {
 		return this->vars[p.index].name + (p.isChannel ? (p.isSend ? "!" : "?") : "");
 	};
 
 	std::for_each(projectionSets.begin(), projectionSets.end(),
 			[this, &toString](auto &dep) {
-			cout << "  <( " << this->vars[dep.first].name << " )>  ";
+			clog << "  <( " << this->vars[dep.first].name << " )>  ";
 
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(cout, ", "),
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "),
 					[&toString](const ProjectionItem &item) {
 					return toString(item);
 					});
-			cout << endl;
+			clog << endl;
 			});
-	cout << "  # ## ### </PS> ### ## #  " << endl;
+	clog << "  # ## ### </PS> ### ## #  " << endl;
 
 
 	//
@@ -2156,7 +2331,7 @@ vector<graph> graph::project() {
 	for (const auto& [var, items] : projectionSets) {
 		chp::graph process = *this;
 		process.name += + "_" + this->vars[var].name;
-		cout << "extracting: " << process.name << endl;
+		clog << "extracting: " << process.name << endl;
 		vector<TransitionIdx> toDelete;
 		set<ProjectionItem> varItems(items.begin(), items.end());
 
@@ -2194,7 +2369,7 @@ vector<graph> graph::project() {
 				toDelete.push_back(transitionIdx);
 			}
 		}
-		cout << "garbage collected: " << toDelete.size() << endl;
+		clog << "garbage collected: " << toDelete.size() << endl;
 
 		// Prunce components outside the projection
 		size_t watchDog = 0;
@@ -2205,17 +2380,17 @@ vector<graph> graph::project() {
 			transition.guard = Expression::vdd();
 			transition.action = arithmetic::Choice({{}});
 
-			if (watchDog > 256) { cout << "woof!" << endl; break; }
+			if (watchDog > MAX_PROCESS_COUNT) { clog << "projection watchdog woof!" << endl; break; }
 			watchDog++;
 		}
 		//process.post_process(true, false);
-		process.reduce(true, false, true);
+		process.reduce(true, false, false); //true);
 
 		processes.push_back(process);
-		cout << "extracted." << endl;
+		clog << "extracted." << endl;
 	}
 
-	cout << "projected." << endl;
+	clog << "projected." << endl;
 	return processes;
 }
 

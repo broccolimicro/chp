@@ -161,15 +161,18 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	struct controlFlowBlock {
 		size_t uid;
+		bool reset = false;
+		vector<petri::iterator> transitions;
+
+		// analysis metadata
 		set<size_t> ins;
 		set<size_t> outs;
-		petri::iterator first;
-		petri::iterator last;  //TODO: delete first+last? redundant with transitions vector
-		vector<petri::iterator> transitions;
-		unordered_map<size_t, size_t> gens;  // transition_idx of def -> var defined
-		unordered_map<size_t, size_t> kills;  // transition_idx of redef -> prev transition_idx def
-		unordered_map<size_t, size_t> preDefs;  // var_idx -> dsa_idx
-		unordered_map<size_t, size_t> postDefs;  // var_idx -> dsa_idx
+		//petri::iterator first;
+		//petri::iterator last;
+		unordered_map<TransitionIdx, size_t> gens;  // transition_idx of def -> var defined
+		unordered_map<TransitionIdx, TransitionIdx> kills;  // transition_idx of redef -> prev transition_idx def
+		unordered_map<VarIdx, size_t> preDefs;  // var_idx -> dsa_idx
+		unordered_map<VarIdx, size_t> postDefs;  // var_idx -> dsa_idx
 	};
 
 	unordered_map<size_t, size_t> transitionToBlock;
@@ -178,6 +181,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	//size_t getReachingDef(size_t var_idx, size_t transition_idx);
 	pair<int, vector<size_t>> getPreviousDefinitions(petri::iterator it, const vector<petri::iterator> &v);
 	size_t getEnumeratedVar(size_t varIdx, size_t num, string delimiter="_");
+	//TODO: useful? size_t getUnenumeratedVar(size_t varIdx);
 	void increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t dsaCountAfter);
 	unordered_map<size_t, size_t> mergeDefinitionsBeforeBlock(size_t blockId);
 	void computeControlFlowGraph();
@@ -205,6 +209,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	vector<graph> decompose();
 
 	//string to_string(const arithmetic::Expression &e) const; //TODO: idea for pretty-printing WITH var names rendered, but I don't want to make dependency
+	void renderReset();
 };
 
 struct ProjectionItem {
@@ -212,7 +217,10 @@ struct ProjectionItem {
 	bool isChannel = false;
 	bool isSend = false;
 	//bool isInternal;
-	//ProjectionItem partner;
+	//ProjectionItem partner;  // if this is a channel, reference other side of isSend
+	//TODO: does channel partner always exist?
+
+  // Make ProjectionItem operate as size_t
 	operator size_t() const noexcept { return index; }
 	friend ProjectionItem operator+(ProjectionItem lhs, size_t rhs) {
 		lhs.index += rhs;
