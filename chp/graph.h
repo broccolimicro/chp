@@ -67,9 +67,12 @@ using petri::parallel;
 using petri::choice;
 using petri::sequence;
 
-//TODO: beyond this namespace?
+//TODO(steven.kneiser): migrate named-size_t's beyond this namespace?
 typedef size_t TransitionIdx;
 typedef size_t VarIdx;
+typedef size_t VarValue;
+typedef size_t VarDSAIdx;
+typedef size_t BlockIdx;
 
 struct place : petri::place
 {
@@ -160,50 +163,53 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void post_process(bool proper_nesting=false, bool aggressive=false);
 
 	struct controlFlowBlock {
-		size_t uid;
+		BlockIdx uid;
 		bool reset = false;
 		vector<petri::iterator> transitions;
 
 		// analysis metadata
-		set<size_t> ins;
-		set<size_t> outs;
+		set<BlockIdx> ins;
+		set<BlockIdx> outs;
 		//petri::iterator first;
 		//petri::iterator last;
-		unordered_map<TransitionIdx, size_t> gens;  // transition_idx of def -> var defined
+		unordered_map<TransitionIdx, VarIdx> gens;  // transition_idx of def -> var defined
 		unordered_map<TransitionIdx, TransitionIdx> kills;  // transition_idx of redef -> prev transition_idx def
-		unordered_map<VarIdx, size_t> preDefs;  // var_idx -> dsa_idx
-		unordered_map<VarIdx, size_t> postDefs;  // var_idx -> dsa_idx
+		unordered_map<VarIdx, VarDSAIdx> preDefs;  // var_idx -> dsa_idx
+		unordered_map<VarIdx, VarDSAIdx> postDefs;  // var_idx -> dsa_idx
+		//TODO(steven.kneiser): more explicitly rename these as "pre(Block)Defs" & "postBlockDefs"?
 	};
 
-	unordered_map<size_t, size_t> transitionToBlock;
+	unordered_map<TransitionIdx, BlockIdx> transitionToBlock;
 	vector<controlFlowBlock> controlFlowGraph;
 
-	//size_t getReachingDef(size_t var_idx, size_t transition_idx);
-	pair<int, vector<size_t>> getPreviousDefinitions(petri::iterator it, const vector<petri::iterator> &v);
-	size_t getEnumeratedVar(size_t varIdx, size_t num, string delimiter="_");
-	//TODO: useful? size_t getUnenumeratedVar(size_t varIdx);
-	void increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t dsaCountAfter);
-	unordered_map<size_t, size_t> mergeDefinitionsBeforeBlock(size_t blockId);
+	//size_t getReachingDef(VarIdx var_idx, TransitionIdx transition_idx);
+	pair<int, vector<TransitionIdx>> getPreviousDefinitions(petri::iterator it, const vector<petri::iterator> &v);
+	VarIdx getEnumeratedVar(VarIdx varIdx, VarDSAIdx num, string delimiter="_");
+	//TODO(steven.kneiser): would a normalizing (DE)numerator be useful or encourage bad habits?
+	//VarIdx getUnenumeratedVar(VarIdx varIdx);
+
+	void increaseBlockVarToDSAIndex(BlockIdx blockIdx, VarIdx varIdx, VarDSAIdx dsaCountAfter);
+	unordered_map<VarIdx, VarDSAIdx> mergeDefinitionsBeforeBlock(BlockIdx blockId);
 	void computeControlFlowGraph();
 	void convertToDSA();
 
 	struct useDefChain {
 		string name;
-		//size_t index;
-		//size_t DSAIndex = 0;
-		vector<size_t> defs;
-		vector<size_t> uses;
+		//VarIdx index;
+		//VarDSAIdx DSAIndex = 0;
+		vector<TransitionIdx> defs;
+		vector<TransitionIdx> uses;
 	};
 
-	unordered_map<size_t, useDefChain> useDefChains;
-	void setUseDef(size_t var_idx, size_t transition_idx, bool is_definition=false);
-	void extractUseDefFromExpression(size_t transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
-	void extractUseDefFromTransition(size_t transition_idx);
+	unordered_map<VarIdx, useDefChain> useDefChains;
+	void setUseDef(VarIdx var_idx, TransitionIdx transition_idx, bool is_definition=false);
+	void extractUseDefFromExpression(TransitionIdx transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
+	void extractUseDefFromTransition(TransitionIdx transition_idx);
 	void computeUseDefChains();
 
-	//TODO: better name for higher-order transformation? substitution? variable renaming? lifetime / live range splitting?
+	//TODO(steven.kneiser): better name for higher-order transformation? substitution? variable renaming? lifetime / live range splitting?
 	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
-	void renameVarAtTransition(size_t varIdx, size_t transitionIdx);
+	void renameVarAtTransition(VarIdx varIdx, TransitionIdx transitionIdx);
 
 	vector<graph> project();
 	vector<graph> decompose();
@@ -217,8 +223,8 @@ struct ProjectionItem {
 	bool isChannel = false;
 	bool isSend = false;
 	//bool isInternal;
+	//TODO(steven.kneiser): does channel partner always exist?
 	//ProjectionItem partner;  // if this is a channel, reference other side of isSend
-	//TODO: does channel partner always exist?
 
   // Make ProjectionItem operate as size_t
 	operator size_t() const noexcept { return index; }
