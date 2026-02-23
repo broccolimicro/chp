@@ -1,5 +1,5 @@
 NAME          = chp
-DEPEND        = petri flow arithmetic interpret_arithmetic parse_cog parse_expression parse_ucs parse_verilog parse common 
+DEPEND        = petri flow arithmetic interpret_arithmetic interpret_chp parse_dot parse_cog parse_expression parse_ucs parse_verilog parse common 
 TEST_DEPEND   = interpret_chp interpret_flow interpret_arithmetic parse_cog parse_chp parse_dot parse_verilog petri flow arithmetic parse_expression parse_ucs parse common
 
 COVERAGE ?= 0
@@ -55,7 +55,9 @@ else
         CXXFLAGS += -D LINUX
     endif
     ifeq ($(UNAME_S),Darwin)
-        CXXFLAGS += -D OSX -mmacos-version-min=15.0 -D GRAPHVIZ_SUPPORTED
+        CXXFLAGS += -D OSX -mmacos-version-min=26.0 -D GRAPHVIZ_SUPPORTED
+        INCLUDE_PATHS += -I$(shell brew --prefix graphviz)/include
+        LIBRARY_PATHS += -L$(shell brew --prefix graphviz)/lib
         TEST_INCLUDE_PATHS += -I$(shell brew --prefix graphviz)/include
         TEST_LIBRARY_PATHS += -L$(shell brew --prefix graphviz)/lib
     endif
@@ -82,8 +84,8 @@ coverage: clean
 	$(MAKE) COVERAGE=1 tests
 	./$(TEST_TARGET) || true  # Continue even if tests fail
 	lcov --capture --directory build/$(SRCDIR) --output-file coverage.info
-	lcov --ignore-errors unused --remove coverage.info '/usr/include/*' '*/googletest/*' '*/tests/*' --output-file coverage_filtered.info
-	genhtml coverage_filtered.info --output-directory coverage_report
+	lcov --remove coverage.info '/usr/include/*' '*/googletest/*' '*/tests/*' --output-file coverage_filtered.info
+	genhtml --ignore-errors category,corrupt,inconsistent coverage_filtered.info --output-directory coverage_report
 
 $(TARGET): $(OBJECTS)
 	ar rvs $(TARGET) $(OBJECTS)

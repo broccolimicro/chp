@@ -300,7 +300,9 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 	arithmetic::RuleSet substitutions({
 		//(a[b:c]) > (),
 		(arithmetic::call("recv", {x})) > (x),
-		(arithmetic::call("probe", {x})) > (x),
+		(arithmetic::call("true", {x})) > (x),
+		(arithmetic::isTrue(x)) > (x),
+		(arithmetic::isValid(x)) > (x),
 		(1 && x) > (x),
 		(0 || x) > (x),
 	});
