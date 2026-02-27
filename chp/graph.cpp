@@ -980,7 +980,15 @@ void graph::flatten(bool debug) {
 
 	// Is the dominator in the reset? if not, march to marking & unzip to dominator
 	//TODO: handle pre-disconnected start-up sequence (shuffle on to each branch)
+	if (this->reset.empty()) {
+		cout << "internal: empty reset" << endl;
+		return;
+	}
 	state &marking = this->reset[0];  //TODO: handle multiple resets in this->reset?
+	if (marking.tokens.empty()) {
+		cout << "internal: empty reset marking" << endl;
+		return;
+	}
 	int start_idx = marking.tokens[0].index; //TODO: handle multi-token markings
 	petri::iterator start(place::type, start_idx);
 	if (debug) { cout << endl << endl << "=== RESET>" << start.to_string() << endl; }
