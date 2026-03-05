@@ -2046,7 +2046,7 @@ vector<graph> graph::project() {
 	//}
 
 	//TODO: print & dehug/verify useDefChains again
-	clog << " ~~> ~~> ~~> " << endl;
+	clog << endl << " ~~> ~~> ~~> DepSets" << endl;
 	std::for_each(dependencySets.begin(), dependencySets.end(), [this](auto &dep) {
 			clog << this->vars[dep.first].name << " <- ";
 			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
@@ -2055,7 +2055,7 @@ vector<graph> graph::project() {
 
 	//TODO: verify Dependency Sets & ensure only channel-Sends are included
 	//TODO: this is a great test suite to write
-	clog << " ~> ~> ~> ";
+	clog << endl << " ~> ~> ~> defs/targets: ";
 	for (auto &[varIdx,v] : dependencySets) { clog << this->vars[varIdx].name << " "; }
 	clog << endl;
 
@@ -2076,19 +2076,88 @@ vector<graph> graph::project() {
 	//}
 	set<petri::iterator> umbilicalCords;  //TODO: where best to place this? doesn't matter at all atm, but more legibility will be nice
 	std::unordered_map<size_t, set<size_t>> invertedDependencySet;  // value from dependencySet values -> set of keys in dependencySet who CONTAIN/map-to this value
+	//TODO: hwat. auto const?? you mean const auto? shouldn't this not even be const?
 	for (auto const &[target, dependencies] : dependencySets) {
 		for (size_t dependency : dependencies) {
 			invertedDependencySet[dependency].insert(target);
 		}
 	}
 
-	clog << " <~~ <~~ <~~ " << endl;
+	clog << endl << " <~~ <~~ <~~ InvDepSets" << endl;
 	std::for_each(invertedDependencySet.begin(), invertedDependencySet.end(), [this](auto &dep) {
 			clog << this->vars[dep.first].name << " <- ";
 			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
 			clog << endl;
 			});
 
+
+
+	// Identify selections w/ multi-definition sequences,
+	// where guards/predicates need to fork into branching copies
+	// (in case we split between those defintions in projection)
+	for (const controlFlowBlock &block : this->controlFlowGraph) {
+		if (block.outs.size() < 2) { continue; }  // Ignore non-selections
+
+		// Filter for only outgoing CONDITIONAL-splits, not parallel-splits
+		//   (e.g. single outgoing split-place, not if this lastTransition is a split-transition)
+		petri::iterator lastTransition = block.transitions.back();
+		if (this->next(lastTransition).size() > 1) { continue; }
+		//TODO: verify this wasn't too harsh a filter. what if a heterogenous split whereby there's a proper selection but in parallel with something else?
+		//  ...there could be one out-place that's a conditional split with multiple branches next to another place leading to another straightline program
+
+		unordered_set<VarIdx> allOutGuardVars;
+		vector<Expression> outGuards;
+		unordered_map<TransitionIdx, VarIdx> outGens;
+
+		for (BlockIdx outBlockIdx : block.outs) {
+			const controlFlowBlock &outBlock = this->controlFlowGraph[outBlockIdx];
+			outGens.insert(outBlock.gens.begin(), outBlock.gens.end());
+
+			petri::iterator outTransitionIt = outBlock.transitions.front();
+			const chp::transition &outTransition = this->transitions[outTransitionIt.index];
+			//TODO: outTransition.is_valid() check even needed?
+			Expression outGuard = outTransition.guard;
+			outGuards.push_back(outGuard);
+
+			//TODO: only scrape outGuardVars from initial transition, not subsequents [at least not yet]
+			//   ...this actually seems better: we should handle simple awwaits differently from selection predicates
+			vector<VarIdx> outGuardVars = getVarsFromExpression(outGuard);
+			allOutGuardVars.insert(outGuardVars.begin(), outGuardVars.end());
+		}
+
+		if (outGens.size() < 2) { continue; }  // Ignore selections not enclosing multiple definitions
+
+		clog << endl << " # # # # # # # # (block #" << block.uid << ")" << endl;
+		clog << "* outGens)" << endl;
+		for (auto &[transitionIdx, varIdx] : outGens) { clog << "  - " << this->vars[varIdx].name << " @ " << transitionIdx << endl; }
+		clog << "* allOutGuardVars)" << endl;
+		for (VarIdx varIdx : allOutGuardVars) { clog << "  - " << this->vars[varIdx].name << endl; }
+		clog << endl;
+
+
+		//TODO: RETVRN HERE
+		//TODO: Great, we've found a multi-def selection!
+		//  now 1) each of these outGuards now need a copy process
+		//  then 2) insert copies of this entire block??? ...or save for detection later in projection (with some explicit "splitGuards" hook)
+		//  also 3) properly substitute/replace/rewrite rule with respective new guardVar copy
+		//  then 4) document this properly in ProjectionSets
+	}
+
+
+	//for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
+	//	if (not this->transitions.is_valid(transitionIdx)) { continue; }
+
+	//	//TODO: shouldn't be const
+	//	const chp::transition &transition = this->transitions[transitionIdx];
+	//	const Expression guard = transition.guard = 
+
+	//	if (transition.guard == Expression::vdd()) { continue; }
+	//	cout << ">/< guard to split: " << endl;
+	//	
+	//}
+
+
+	//TODO: ummm, are there 2 "identify multi-use variables" sections??? (ahh, they can be merged: this one is for multi-dep `useCount >= 2` while the next one is `useCount == 1`)
 	// Identify multi-use variables that need a copy process to fork their dataflow
 	for (auto const &[dependency, users] : invertedDependencySet) {
 		size_t useCount = users.size();
