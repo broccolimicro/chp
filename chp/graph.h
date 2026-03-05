@@ -255,9 +255,9 @@ struct ProjectionItem {
 	//bool operator==(const ProjectionItem&) const = default;
 };
 
-vector<size_t> getVarsFromExpression(const arithmetic::Expression &e);
-vector<size_t> findInputChannelsInExpression(const arithmetic::Expression &e);
-vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e);
+vector<VarIdx> getVarsFromExpression(const arithmetic::Expression &e);
+vector<VarIdx> findInputChannelsInExpression(const arithmetic::Expression &e);
+vector<VarIdx> findOutputChannelsInExpression(const arithmetic::Expression &e);
 bool isDisqualifyingItemInExpression(const arithmetic::Expression &e, const set<ProjectionItem> &items, bool debug=false);
 
 }

@@ -1745,11 +1745,11 @@ void graph::convertToDSA() {
 	clog << "DSA'd." << endl;
 }
 
-vector<size_t> getVarsFromExpression(const arithmetic::Expression &e) {
+vector<VarIdx> getVarsFromExpression(const arithmetic::Expression &e) {
 	if (e.isUndef()) { return {}; }
 	if (e.top.isVar() && e.size() == 0) { return {e.top.index}; }
 
-	vector<size_t> vars;
+	vector<VarIdx> vars;
 	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
 
 		// Iterate across all sub-expression leaves
@@ -1784,7 +1784,7 @@ vector<VarIdx> findInputChannelsInExpression(const arithmetic::Expression &e) {
 }
 
 //TODO: Clean up this sloppy algorithmic solution. No need to fully-traverse again.
-vector<size_t> findOutputChannelsInExpression(const arithmetic::Expression &e) {
+vector<VarIdx> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
 
 	vector<VarIdx> outputChannels;
@@ -1925,6 +1925,7 @@ bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionIt
 vector<graph> graph::project() {
 	clog << endl << "projecting." << endl;
 
+	//TODO: unordered_sets, obviously
 	unordered_map<VarIdx, vector<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
 	set<VarIdx> inputChannels, outputChannels;
 
@@ -1932,8 +1933,8 @@ vector<graph> graph::project() {
 	unordered_map<VarIdx, vector<VarIdx>> channelRecvs;  // only internal channels
 	unordered_map<VarIdx, vector<VarIdx>> channelSends;  // only internal channels
 
-	//set<VarIdx> recvChannels; //TODO: unordered obvi
-	//set<VarIdx> sendChannels; //TODO: unordered obvi
+	//set<VarIdx> recvChannels;
+	//set<VarIdx> sendChannels;
 	//auto isInternalChannelRecv = [&channelRecvs](VarIdx var) -> bool {
 	//	return std::find(intRecvs.begin(), intRecvs.end(), varIdx) != intRecvs.end();
 	//};
@@ -1951,8 +1952,8 @@ vector<graph> graph::project() {
 	//
 	// 1) Build Dependency Sets
 	//
-	//TODO: unordered_sets, obviously
-	unordered_map<VarIdx, vector<VarIdx>> dependencySets;  //TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets!
+	//TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets! they can have multi-uses
+	unordered_map<VarIdx, vector<VarIdx>> dependencySets;
 	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
 		if (not this->transitions.is_valid(transitionIdx)) { continue; }
 
@@ -2024,7 +2025,7 @@ vector<graph> graph::project() {
 
 	//TODO: find less sloppy opportunity to index external input-channels
 	// Deduce external input-channels via existence in DependencySets values but not keys
-	for (auto const &[target, dependencies] : dependencySets) {
+	for (const auto &[target, dependencies] : dependencySets) {
 		for (VarIdx dependency : dependencies) {
 			if (not dependencySets.contains(dependency)) {
 				inputChannels.insert(dependency);
@@ -2056,29 +2057,14 @@ vector<graph> graph::project() {
 	//TODO: verify Dependency Sets & ensure only channel-Sends are included
 	//TODO: this is a great test suite to write
 	clog << endl << " ~> ~> ~> defs/targets: ";
-	for (auto &[varIdx,v] : dependencySets) { clog << this->vars[varIdx].name << " "; }
+	for (const auto &[varIdx,v] : dependencySets) { clog << this->vars[varIdx].name << " "; }
 	clog << endl;
 
 
-	//
-	// 2) Insert copy variables & internal-communication channels
-	//
-	//TODO: perhaps a Mapping<size_t> is more appropriate?
-	//TODO: leverage newly introduced TransitionIdx vs VarIdx typedefs for readability
-	//  useDef:        def_idx -> <use_idx>
-	//  dependencySet: def_var -> <dep_var>
-	//  ???:           dep_var -> <def_var>   aHa! inverted/reversed/transposed dependencySet
-	//std::unordered_map<size_t, size_t> dependencyUseCounter;
-	//for (auto const &[target, dependencies] : dependencySets) {
-	//	for (size_t dependency : dependencies) {
-	//		dependencyUseCounter[dependency]++;
-	//	}
-	//}
-	set<petri::iterator> umbilicalCords;  //TODO: where best to place this? doesn't matter at all atm, but more legibility will be nice
-	std::unordered_map<size_t, set<size_t>> invertedDependencySet;  // value from dependencySet values -> set of keys in dependencySet who CONTAIN/map-to this value
-	//TODO: hwat. auto const?? you mean const auto? shouldn't this not even be const?
-	for (auto const &[target, dependencies] : dependencySets) {
-		for (size_t dependency : dependencies) {
+	// Compute inverted Dependency Sets to detect which users depend on this var's definition
+	std::unordered_map<VarIdx, set<VarIdx>> invertedDependencySet;
+	for (const auto &[target, dependencies] : dependencySets) {
+		for (VarIdx dependency : dependencies) {
 			invertedDependencySet[dependency].insert(target);
 		}
 	}
@@ -2091,6 +2077,11 @@ vector<graph> graph::project() {
 			});
 
 
+	//
+	// 2) Insert copy variables & internal-communication channels
+	//
+	set<petri::iterator> umbilicalCords;
+
 
 	// Identify selections w/ multi-definition sequences,
 	// where guards/predicates need to fork into branching copies
@@ -2101,7 +2092,7 @@ vector<graph> graph::project() {
 		// Filter for only outgoing CONDITIONAL-splits, not parallel-splits
 		//   (e.g. single outgoing split-place, not if this lastTransition is a split-transition)
 		petri::iterator lastTransition = block.transitions.back();
-		if (this->next(lastTransition).size() > 1) { continue; }
+		if (this->next(lastTransition).size() > 1) { continue; }  //TODO: verify: this->next or this->out?
 		//TODO: verify this wasn't too harsh a filter. what if a heterogenous split whereby there's a proper selection but in parallel with something else?
 		//  ...there could be one out-place that's a conditional split with multiple branches next to another place leading to another straightline program
 
@@ -2138,6 +2129,8 @@ vector<graph> graph::project() {
 		//TODO: RETVRN HERE
 		//TODO: Great, we've found a multi-def selection!
 		//  now 1) each of these outGuards now need a copy process
+
+		//TODO: now that we've identified & set the stage for projection, save these steps for when the time is right
 		//  then 2) insert copies of this entire block??? ...or save for detection later in projection (with some explicit "splitGuards" hook)
 		//  also 3) properly substitute/replace/rewrite rule with respective new guardVar copy
 		//  then 4) document this properly in ProjectionSets
@@ -2161,28 +2154,20 @@ vector<graph> graph::project() {
 	// Identify multi-use variables that need a copy process to fork their dataflow
 	for (auto const &[dependency, users] : invertedDependencySet) {
 		size_t useCount = users.size();
-		//clog << " __ " << this->vars[dependency].name << ": " << useCount
-		//	<< ((useCount > 1) ? "!" : "") << endl;
 		if (useCount < 2) { continue; }
+		clog << " __ " << this->vars[dependency].name << ": " << useCount
+			<< ((useCount > 1) ? "!" : "") << endl;
 
 		//// Insert new "x_fork := x;" copy-assignment immediately after x assignment
 		//// This serves as the base of a fork, splitting/parallelizing out to every use/reference
 		VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork");
 		projectionSets[varForkIdx].push_back(ProjectionItem(varForkIdx));
 
-		//arithmetic::Action forkAssignment;
-		//forkAssignment.lvalue = arithmetic::Expression::varOf(varForkIdx);
-		//forkAssignment.rvalue = arithmetic::Expression::varOf(dependency);
-		//chp::transition forkAssignmentTransition(
-		//		arithmetic::Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
-		////size_t forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
-		////petri::iterator forkIt(petri::transition::type, forkTransitionIdx);
-
 		////TODO: is this much recalculation needed to retrace definition?
 		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
 		if (dependencyUseDefChain.defs.empty()) { continue; }
 
-		size_t defTransitionIdx = dependencyUseDefChain.defs[0];
+		TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
 		////clog << this->transitions[defTransitionIdx] << endl;
 		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
 		//petri::iterator forkAssignmentIt = this->super::insert_after(defTransitionIt, forkAssignmentTransition);
@@ -2231,6 +2216,8 @@ vector<graph> graph::project() {
 		petri::iterator branchTargetTransitionIt = this->next(originalUmbilicalCordIt)[0];
 		//TODO: yikes, this structural decision probably isn't needed. I imagine a recv with multiple parallel outs doesn't fit into this fork. I only considered the next transition, back to the documented approach.
 
+
+		// Insert "CHAN.send(x_fork); x_usage_n = CHAN.recv()" internal-communication channels in-place of assignment
 		size_t copyCount = 0;
 		for (VarIdx user : users) {
 			//for (TransitionIdx dependencyUseTransition : dependencyUseDefChain.uses)
@@ -2270,13 +2257,11 @@ vector<graph> graph::project() {
 
 			// Insert "CHAN.send(x_fork); x_usage_n = CHAN.recv()" internal-communication channels in-place of assignment
 			clog << endl << "\\/\\/\\/\\/\\/ multi-dep" << endl;
-			//useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
-			//if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
-			//TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
-			//petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
 			VarIdx channelIdx = this->getEnumeratedVar(dependency, copyCount, "_BRANCH_CHAN");
+			//clog << "^%$ " << this->vars[varCopyIdx].name << endl;
 
 
+			//TODO: comment
 			arithmetic::Action usageSend;
 			arithmetic::Expression channelSendExpr = arithmetic::call(
 					"send",
@@ -2302,6 +2287,7 @@ vector<graph> graph::project() {
 			channelSends[varForkIdx].push_back(channelIdx);
 
 
+			//TODO: comment
 			arithmetic::Action usageRecv;
 			arithmetic::Expression channelRecvExpr = arithmetic::call(
 					"recv",
@@ -2358,14 +2344,13 @@ vector<graph> graph::project() {
 	}
 
 
-	// Identify multi-use variables that need to fork into branching copies
-	for (auto const &[dependency, users] : invertedDependencySet) {
+	// Convert single-use variables (single "user" in their invDepSet) into dedicated channel
+	for (const auto &[dependency, users] : invertedDependencySet) {
 		size_t useCount = users.size();  //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
+		if (useCount != 1) { continue; }
 		clog << " __ " << this->vars[dependency].name << ": " << useCount
 			<< ((useCount > 1) ? "!" : "") << endl;
-		if (useCount != 1) { continue; }
 		VarIdx user = *users.begin(); //users[0];
-
 
 		// Insert "CHAN.send(x); x_usage_n = CHAN.recv()" after definition
 		clog << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ single-dep R7->8" << endl;
@@ -2377,6 +2362,7 @@ vector<graph> graph::project() {
 		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "_LONE_CHAN");
 
 
+		//TODO: comment
 		arithmetic::Action usageSend;
 		arithmetic::Expression channelSendExpr = arithmetic::call(
 				"send",
@@ -2394,6 +2380,7 @@ vector<graph> graph::project() {
 		channelSends[dependency].push_back(channelIdx);
 
 
+		//TODO: comment
 		arithmetic::Action usageRecv;
 		arithmetic::Expression channelRecvExpr = arithmetic::call(
 				"recv",
