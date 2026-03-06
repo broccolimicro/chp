@@ -218,6 +218,8 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void renderReset();
 };
 
+
+//NOTE(steven.kneiser): ProjectionItem inter-operates with size_t by design, so equality & hashing ONLY compare index (not other metadata like isChannel)
 struct ProjectionItem {
 	VarIdx index;
 	bool isChannel = false;
@@ -261,4 +263,3 @@ vector<VarIdx> findOutputChannelsInExpression(const arithmetic::Expression &e);
 bool isDisqualifyingItemInExpression(const arithmetic::Expression &e, const set<ProjectionItem> &items, bool debug=false);
 
 }
-
