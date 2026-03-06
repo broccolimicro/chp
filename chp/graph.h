@@ -122,6 +122,45 @@ struct variable {
 	vector<int> remote;
 };
 
+//NOTE(steven.kneiser): ProjectionItem inter-operates with size_t by design, so equality & hashing ONLY compare index (not other metadata like isChannel)
+//TODO(steven.kneiser): lowercase the camelCase to match codebase
+struct ProjectionItem {
+	VarIdx index;
+	bool isChannel = false;
+	bool isSend = false;
+	//bool isInternal;
+	//TODO(steven.kneiser): does channel partner always exist?
+	//ProjectionItem partner;  // if this is a channel, reference other side of isSend
+
+  // Make ProjectionItem operate as size_t
+	operator size_t() const noexcept { return index; }
+	friend ProjectionItem operator+(ProjectionItem lhs, size_t rhs) {
+		lhs.index += rhs;
+		return lhs;
+	}
+
+	bool operator()(const ProjectionItem& a, const ProjectionItem& b) const {
+		return a.index < b.index;
+	}
+	bool operator()(size_t a, const ProjectionItem& b) const {
+		return a < b.index;
+	}
+	bool operator()(const ProjectionItem& a, size_t b) const {
+		return a.index < b;
+	}
+	ProjectionItem& operator=(const ProjectionItem &other) {
+		this->index = other.index;
+		this->isChannel = other.isChannel;
+		this->isSend = other.isSend;
+		return *this;
+	}
+	ProjectionItem& operator=(size_t num) {
+		this->index = num;
+		return *this;
+	}
+	//bool operator==(const ProjectionItem&) const = default;
+};
+
 struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
 {
 	typedef petri::graph<chp::place, chp::transition, petri::token, chp::state> super;
@@ -211,50 +250,12 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
 	void renameVarAtTransition(VarIdx varIdx, TransitionIdx transitionIdx);
 
+	unordered_map<VarIdx, set<ProjectionItem>> computeProjectionSets();
 	vector<graph> project();
 	vector<graph> decompose();
 
 	//string to_string(const arithmetic::Expression &e) const; //TODO: idea for pretty-printing WITH var names rendered, but I don't want to make dependency
 	void renderReset();
-};
-
-
-//NOTE(steven.kneiser): ProjectionItem inter-operates with size_t by design, so equality & hashing ONLY compare index (not other metadata like isChannel)
-struct ProjectionItem {
-	VarIdx index;
-	bool isChannel = false;
-	bool isSend = false;
-	//bool isInternal;
-	//TODO(steven.kneiser): does channel partner always exist?
-	//ProjectionItem partner;  // if this is a channel, reference other side of isSend
-
-  // Make ProjectionItem operate as size_t
-	operator size_t() const noexcept { return index; }
-	friend ProjectionItem operator+(ProjectionItem lhs, size_t rhs) {
-		lhs.index += rhs;
-		return lhs;
-	}
-
-	bool operator()(const ProjectionItem& a, const ProjectionItem& b) const {
-		return a.index < b.index;
-	}
-	bool operator()(size_t a, const ProjectionItem& b) const {
-		return a < b.index;
-	}
-	bool operator()(const ProjectionItem& a, size_t b) const {
-		return a.index < b;
-	}
-	ProjectionItem& operator=(const ProjectionItem &other) {
-		this->index = other.index;
-		this->isChannel = other.isChannel;
-		this->isSend = other.isSend;
-		return *this;
-	}
-	ProjectionItem& operator=(size_t num) {
-		this->index = num;
-		return *this;
-	}
-	//bool operator==(const ProjectionItem&) const = default;
 };
 
 vector<VarIdx> getVarsFromExpression(const arithmetic::Expression &e);

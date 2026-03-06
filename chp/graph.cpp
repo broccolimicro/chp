@@ -1923,11 +1923,13 @@ bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionIt
 //
 // Data-driven Decomposition
 //
-vector<graph> graph::project() {
-	clog << endl << "projecting." << endl;
+
+
+unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
+	clog << endl << "computing projection sets." << endl;
 
 	unordered_map<VarIdx, vector<VarIdx>> dependencySets;
-	unordered_map<VarIdx, vector<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
+	unordered_map<VarIdx, set<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
 	//TODO(steven.kneiser): document intended diff between depSets & projSets ...is it just using ProjectionItem's properly for channels?
 	//    ...since depSets are mainly for computing invDepSets while projSets are for the ultimate final projection
 
@@ -1936,8 +1938,9 @@ vector<graph> graph::project() {
 
 	//
 	// 1) Build Dependency Sets
+	//      ...in order to build Projection Sets
 	//
-	//TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets! they can have multi-uses
+	//TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets! they can have multi-uses (do we support those yet?)
 	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
 		if (not this->transitions.is_valid(transitionIdx)) { continue; }
 
@@ -1968,19 +1971,19 @@ vector<graph> graph::project() {
 					// Prune redundant self from right-hand side
 					rightVars.erase(std::remove(rightVars.begin(), rightVars.end(), outputChannel), rightVars.end());
 					dependencySets[outputChannel].insert(dependencySets[outputChannel].begin(), rightVars.begin(), rightVars.end());
-					projectionSets[outputChannel].insert(projectionSets[outputChannel].begin(), rightVars.begin(), rightVars.end());
+					projectionSets[outputChannel].insert(rightVars.begin(), rightVars.end());
 					//TODO(steven.kneiser): why, for example, do these projectionSets not get inserted the same as the for-loop? Shouldn't it be either?
 					//   Etiher we're matching depSets or doing the for-loop I would assume
 
 					for (VarIdx var : rightVars) {
 						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
-							projectionSets[outputChannel].push_back(ProjectionItem(var, true, false));
+							projectionSets[outputChannel].insert(ProjectionItem(var, true, false));
 
 						} else {
-							projectionSets[outputChannel].push_back(ProjectionItem(var));
+							projectionSets[outputChannel].insert(ProjectionItem(var));
 						}
 					}
-					projectionSets[outputChannel].push_back(ProjectionItem(outputChannel, true, true));
+					projectionSets[outputChannel].insert(ProjectionItem(outputChannel, true, true));
 
 				// Not an output channel, set DependencySet 
 				} else {
@@ -1988,17 +1991,17 @@ vector<graph> graph::project() {
 					//  or vector-assignment in lvalue, instead of a lone variable (e.g. `(x, y) = (5, 4)`, maybe even `-x = 3`??)
 					VarIdx assignedVar = leftVars[0];
 					dependencySets[assignedVar].insert(dependencySets[assignedVar].begin(), rightVars.begin(), rightVars.end());
-					//projectionSets[assignedVar].insert(projectionSets[assignedVar].begin(), rightVars.begin(), rightVars.end());
+					//projectionSets[assignedVar].insert(rightVars.begin(), rightVars.end());
 
 					for (VarIdx var : rightVars) {
 						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
-							projectionSets[assignedVar].push_back(ProjectionItem(var, true, false));
+							projectionSets[assignedVar].insert(ProjectionItem(var, true, false));
 
 						} else {
-							projectionSets[assignedVar].push_back(ProjectionItem(var));
+							projectionSets[assignedVar].insert(ProjectionItem(var));
 						}
 					}
-					projectionSets[assignedVar].push_back(ProjectionItem(assignedVar));
+					projectionSets[assignedVar].insert(ProjectionItem(assignedVar));
 				}
 			}
 		}
@@ -2042,6 +2045,7 @@ vector<graph> graph::project() {
 
 	//
 	// 2) Insert copy variables & internal-communication channels
+	//      ...in order to build Projection Sets
 	//
 	set<petri::iterator> umbilicalCords;
 
@@ -2115,7 +2119,7 @@ vector<graph> graph::project() {
 		//// Insert new "x_fork := x;" copy-assignment immediately after x assignment
 		//// This serves as the base of a fork, splitting/parallelizing out to every use/reference
 		VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork");
-		projectionSets[varForkIdx].push_back(ProjectionItem(varForkIdx));
+		projectionSets[varForkIdx].insert(ProjectionItem(varForkIdx));
 
 		////TODO: is this much recalculation needed to retrace definition?
 		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
@@ -2129,7 +2133,7 @@ vector<graph> graph::project() {
 
 		// Insert "this.guard -> CHAN.send(x); x_fork := CHAN.recv()"
 		VarIdx forkChannelIdx = this->getEnumeratedVar(dependency, 0, "_FORK_CHAN");
-		//projectionSets[dependency].push_back(varForkIdx); //TODO: be careful of renamed x vs x_fork which I'm still ambiguous what I prefer, but I've already remapped everywhere to x_fork wherever appropriate
+		//projectionSets[dependency].insert(varForkIdx); //TODO: be careful of renamed x vs x_fork which I'm still ambiguous what I prefer, but I've already remapped everywhere to x_fork wherever appropriate
 		clog << "++ " << forkChannelIdx << endl;
 
 
@@ -2144,7 +2148,7 @@ vector<graph> graph::project() {
 		chp::transition forkSendTransition(guard, arithmetic::Choice({{forkSend}}));
 
 		petri::iterator forkSendTransitionIt = this->super::insert_after(defTransitionIt, forkSendTransition);
-		projectionSets[dependency].push_back(ProjectionItem(forkChannelIdx, true, true));
+		projectionSets[dependency].insert(ProjectionItem(forkChannelIdx, true, true));
 
 
 		// Insert "x_fork := CHAN.recv()"
@@ -2157,7 +2161,7 @@ vector<graph> graph::project() {
 		petri::iterator umbilicalCordIt = this->super::insert_after(forkSendTransitionIt, chp::transition());
 		umbilicalCords.insert(umbilicalCordIt);
 		petri::iterator forkRecvTransitionIt = this->super::insert_after(umbilicalCordIt, forkRecvTransition);
-		projectionSets[varForkIdx].push_back(ProjectionItem(forkChannelIdx, true, false));
+		projectionSets[varForkIdx].insert(ProjectionItem(forkChannelIdx, true, false));
 
 
 		//TODO: SLOPPY HACK to get next transition as hook for spawning parallel branchs with the same source & target
@@ -2195,7 +2199,7 @@ vector<graph> graph::project() {
 			clog << "++ " << channelIdx << endl
 					<< "+> " << channelSendExpr << endl;
 			petri::iterator branchSendTransitionIt = this->super::insert_after(branchHeadIt, branchSendTransition);
-			projectionSets[varForkIdx].push_back(ProjectionItem(channelIdx, true, true));
+			projectionSets[varForkIdx].insert(ProjectionItem(channelIdx, true, true));
 
 
 			// Insert "x_usage_n = CHAN.recv()"
@@ -2214,7 +2218,7 @@ vector<graph> graph::project() {
 			petri::iterator branchRecvTransitionIt = this->super::insert_after(branchSendTransitionIt, branchRecvTransition);
 			petri::iterator branchTailIt = this->next(branchRecvTransitionIt)[0];
 			this->super::connect(branchTailIt, branchTargetTransitionIt);
-			projectionSets[user].push_back(ProjectionItem(channelIdx, true, false));
+			projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
 
 
 			// Substitute "x_cp_n" for x usages
@@ -2222,9 +2226,9 @@ vector<graph> graph::project() {
 			usageRename.set(dependency, varUsageIdx);
 			//TODO: or is it fork-instead-of-dependency that needs to be replaced? triple-check
 			for (VarIdx user : users) {
-				vector<ProjectionItem> &p = projectionSets[user];
-				p.erase(std::remove(p.begin(), p.end(), ProjectionItem(dependency)), p.end());
-				p.push_back(ProjectionItem(varUsageIdx));
+				set<ProjectionItem> &p = projectionSets[user];
+				p.erase(ProjectionItem(dependency));
+				p.insert(ProjectionItem(varUsageIdx));
 			}
 
 			////useDefChain &userUseDefChain = this->useDefChains[user];
@@ -2256,8 +2260,7 @@ vector<graph> graph::project() {
 		size_t useCount = users.size();  //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
 		if (useCount != 1) { continue; }
 		clog << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ (single-dep) "  // R7->8 ...why did this feel that way?
-			<< this->vars[dependency].name << ": " << useCount
-			<< ((useCount > 1) ? "!" : "") << endl;
+			<< this->vars[dependency].name << endl;
 		VarIdx user = *users.begin(); //users[0];
 
 		// Insert "CHAN.send(x); x_usage_n = CHAN.recv()" after definition
@@ -2283,7 +2286,7 @@ vector<graph> graph::project() {
 			<< "+> " << channelSendExpr << endl;
 
 		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
-		projectionSets[dependency].push_back(ProjectionItem(channelIdx, true, true));
+		projectionSets[dependency].insert(ProjectionItem(channelIdx, true, true));
 
 
 		// Insert "x_usage_n = CHAN.recv()"
@@ -2302,16 +2305,16 @@ vector<graph> graph::project() {
 		petri::iterator umbilicalCordIt = this->super::insert_after(internalSendTransitionIt, chp::transition());
 		umbilicalCords.insert(umbilicalCordIt);
 		petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
-		projectionSets[user].push_back(ProjectionItem(channelIdx, true, false));
+		projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
 
 
 		// Substitute "x_usage_n" for x in usage
 		Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
 		usageRename.set(dependency, varUsageIdx);
 		for (VarIdx user : users) {
-			vector<ProjectionItem> &p = projectionSets[user];
-			p.erase(std::remove(p.begin(), p.end(), ProjectionItem(dependency)), p.end());
-			p.push_back(ProjectionItem(varUsageIdx));
+			set<ProjectionItem> &p = projectionSets[user];
+			p.erase(ProjectionItem(dependency));
+			p.insert(ProjectionItem(varUsageIdx));
 		}
 
 		if (dependencyUseDefChain.uses.empty()) { continue; }
@@ -2347,11 +2350,21 @@ vector<graph> graph::project() {
 			});
 	clog << "  # ## ### </PS> ### ## #  " << endl << endl;
 
+	return projectionSets;
+}
 
-	//
-	// 3) Project
-	//
+
+//TODO: for arithmetic::Expression perf, cache vector of vars present whenever Expression is updated
+//
+//
+// Data-driven Decomposition
+//
+//
+vector<graph> graph::project() {
+	clog << endl << "projecting." << endl;
+
 	vector<chp::graph> processes;
+	unordered_map<VarIdx, set<ProjectionItem>> projectionSets = this->computeProjectionSets();
 
 	for (const auto& [var, items] : projectionSets) {
 		chp::graph process = *this;
