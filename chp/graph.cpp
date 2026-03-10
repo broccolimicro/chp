@@ -1316,7 +1316,7 @@ void graph::extractUseDefFromExpression(TransitionIdx transition_idx, const arit
 	if (is_definition && e.top.isVar() && e.size() == 0) {
 		this->setUseDef(e.top.index, transition_idx, true);
 
-	} else if (not e.isUndef()) { //if (e.isExpr()) {
+	} else if (not e.isUndef()) { //if (e.isExpr()) {}
 		for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
 
 			// Iterate across all sub-expression leaves
@@ -1589,7 +1589,7 @@ void graph::convertToDSA() {
 				//size_t prev_defining_transition = block.kills[transitionIdx];  //TODO: did we deprecate .kills? We need to search it down
 				liveDefinitions[redefinedVar]++;
 
-			// Append first-time definition
+				// Append first-time definition
 			} else if (block.gens.contains(transitionIdx)) {
 				VarIdx definedVar = block.gens[transitionIdx];
 				liveDefinitions[definedVar] = INITIAL_DSA_VALUE;
@@ -1639,7 +1639,7 @@ void graph::convertToDSA() {
 		if (liveDefinitions != block.postDefs) {
 			clog << " >> novel merge> ";
 			std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){
-				clog << this->vars[d.first].name << "[" << d.second << "], "; });
+					clog << this->vars[d.first].name << "[" << d.second << "], "; });
 			clog << endl;
 			block.postDefs = liveDefinitions;
 
@@ -1920,195 +1920,105 @@ bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionIt
 }
 
 
-//
-// Data-driven Decomposition
-//
 
 
-unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
-	clog << endl << "computing projection sets." << endl;
-
-	unordered_map<VarIdx, vector<VarIdx>> dependencySets;
-	unordered_map<VarIdx, set<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
-	//TODO(steven.kneiser): document intended diff between depSets & projSets ...is it just using ProjectionItem's properly for channels?
-	//    ...since depSets are mainly for computing invDepSets while projSets are for the ultimate final projection
-
-	//TODO(steven.kneiser): great work! Now clean out all "in/out channel" comments & detection schemes now that we have ProjectionItems. Review if this is still the cleanest
 
 
-	//
-	// 1) Build Dependency Sets
-	//      ...in order to build Projection Sets
-	//
-	//TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets! they can have multi-uses (do we support those yet?)
-	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
-		if (not this->transitions.is_valid(transitionIdx)) { continue; }
+//TODO: find what's shared between these two helpers (direct vs copy) & can be wrapped (e.g. assignment->petri? rewriteAssignmentAsChannel() ???)
+//TODO: verfiy that function name functionally matches whatever eventual type signature
+void graph::rewriteEachSingleUseVarAsDirectChannel(
+		set<petri::iterator> &umbilicalCords,
+		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
+	clog << "rewriting each single-use var as a direct channel." << endl;
 
-		// Extract Dependency Set from transition, if there is any
-		const chp::transition &transition = this->transitions[transitionIdx];
-		vector<VarIdx> guardVars = getVarsFromExpression(transition.guard);
+	for (const auto &[dependency, users] : invertedDependencySets) {
+		clog << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ (single-dep) "  // R7->8 ...why did this feel that way?
+			<< this->vars[dependency].name << endl;
 
-		const arithmetic::Choice &action = transition.action;
-		for (const auto &term : action.terms) {
-			for (const auto &action : term.actions) {
-				vector<VarIdx> leftVars = getVarsFromExpression(action.lvalue);
+		size_t useCount = users.size();  //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
+		if (useCount != 1) { continue; }
+		VarIdx user = *users.begin();
 
-				//TODO: is_definition parameter could be more robust ":=" assignment operand matching
-				vector<VarIdx> rightVars = getVarsFromExpression(action.rvalue);
-				vector<VarIdx> inputChannelsUsed = findInputChannelsInExpression(action.rvalue);
-				vector<VarIdx> outputChannelsUsed = findOutputChannelsInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
+		// Insert "CHAN.send(x); x_usage_n = CHAN.recv()" after definition
+		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
+		if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
 
-				// If not assignment, check for output-channel (a.k.a. "send()") which is assignment-ish
-				//TODO: there must be a better way to pre-index not just channels vs vars DURING synthesis but beforehand
-				//  AND it should somehow index the partition between input vs output channels (perhaps, in-only, out-only, and bi-use'd?)
-				//  within "bi-used" we can separate "internal-communication only" channels vs bi-used chans w/ external side-effects/dependencies
-				if (leftVars.empty()) {
-					if (outputChannelsUsed.empty()) { continue; }
+		TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
+		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
+		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "_LONE_CHAN");
 
-					VarIdx outputChannel = outputChannelsUsed[0]; //TODO: support more than one outputChannel per transition
-					clog << " ! CHAN<" << this->vars[outputChannel].name << ">" << endl;
 
-					// Prune redundant self from right-hand side
-					rightVars.erase(std::remove(rightVars.begin(), rightVars.end(), outputChannel), rightVars.end());
-					dependencySets[outputChannel].insert(dependencySets[outputChannel].begin(), rightVars.begin(), rightVars.end());
-					projectionSets[outputChannel].insert(rightVars.begin(), rightVars.end());
-					//TODO(steven.kneiser): why, for example, do these projectionSets not get inserted the same as the for-loop? Shouldn't it be either?
-					//   Etiher we're matching depSets or doing the for-loop I would assume
+		// Insert "CHAN.send(x)"
+		arithmetic::Action usageSend;
+		arithmetic::Expression channelSendExpr = arithmetic::call(
+				"send",
+				{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(dependency)}
+				);
+		usageSend.lvalue = arithmetic::Expression::undef();
+		usageSend.rvalue = channelSendExpr;
+		chp::transition internalSendTransition(
+				arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
+		clog << "++ " << channelIdx << endl
+			<< "+> " << channelSendExpr << endl;
 
-					for (VarIdx var : rightVars) {
-						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
-							projectionSets[outputChannel].insert(ProjectionItem(var, true, false));
+		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
+		projectionSets[dependency].insert(ProjectionItem(channelIdx, true, true));
 
-						} else {
-							projectionSets[outputChannel].insert(ProjectionItem(var));
-						}
-					}
-					projectionSets[outputChannel].insert(ProjectionItem(outputChannel, true, true));
 
-				// Not an output channel, set DependencySet 
-				} else {
-					//TODO(steven.kneiser): Support more complex assignments like multi-variable tuples
-					//  or vector-assignment in lvalue, instead of a lone variable (e.g. `(x, y) = (5, 4)`, maybe even `-x = 3`??)
-					VarIdx assignedVar = leftVars[0];
-					dependencySets[assignedVar].insert(dependencySets[assignedVar].begin(), rightVars.begin(), rightVars.end());
-					//projectionSets[assignedVar].insert(rightVars.begin(), rightVars.end());
+		// Insert "x_usage_n = CHAN.recv()"
+		arithmetic::Action usageRecv;
+		arithmetic::Expression channelRecvExpr = arithmetic::call(
+				"recv",
+				{arithmetic::Expression::varOf(channelIdx)}
+				);
+		VarIdx varUsageIdx = this->getEnumeratedVar(dependency, 0, "_lone");
+		usageRecv.lvalue = arithmetic::Expression::varOf(varUsageIdx);
+		usageRecv.rvalue = channelRecvExpr;
+		chp::transition internalRecvTransition(
+				arithmetic::Expression::vdd(), arithmetic::Choice({{usageRecv}}));
+		clog << "<+ " << channelRecvExpr << endl;
 
-					for (VarIdx var : rightVars) {
-						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
-							projectionSets[assignedVar].insert(ProjectionItem(var, true, false));
+		petri::iterator umbilicalCordIt = this->super::insert_after(internalSendTransitionIt, chp::transition());
+		umbilicalCords.insert(umbilicalCordIt);
+		petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
+		projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
 
-						} else {
-							projectionSets[assignedVar].insert(ProjectionItem(var));
-						}
-					}
-					projectionSets[assignedVar].insert(ProjectionItem(assignedVar));
+
+		// Substitute "x_usage_n" for x in usage
+		Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
+		usageRename.set(dependency, varUsageIdx);
+
+		set<ProjectionItem> &p = projectionSets[user];
+		p.erase(ProjectionItem(dependency));
+		p.insert(ProjectionItem(varUsageIdx));
+
+		if (dependencyUseDefChain.uses.empty()) { continue; }
+		for (TransitionIdx use : dependencyUseDefChain.uses) { //TODO: shouldn't this always be .size()==1? It's a lone var? Maybe used in guard of a non-assignment!
+			chp::transition &usageTransition = this->transitions[use];
+			usageTransition.guard.applyVars(usageRename);
+
+			arithmetic::Choice &choice = usageTransition.action;
+			for (arithmetic::Parallel &term : choice.terms) {
+				for (arithmetic::Action &action : term.actions) {
+					action.rvalue.applyVars(usageRename);
+					//TODO: what if there are multiple uses of the same variable within this assignment? seems less an issue the more I consider it
 				}
 			}
 		}
 	}
 
-
-	//TODO(steven.kneiser): print & dehug/verify useDefChains again
-	clog << endl << " ~~> ~~> ~~> DepSets" << endl;
-	std::for_each(dependencySets.begin(), dependencySets.end(), [this](auto &dep) {
-			clog << this->vars[dep.first].name << " <- ";
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
-			clog << endl;
-			});
-
-	//TODO(steven.kneiser): verify Dependency Sets & ensure only channel-Sends are included
-	//TODO(steven.kneiser): verifying these Sets are a great test suite opportunity
-	clog << endl << " ~> ~> ~> defs/targets: ";
-	for (const auto &[varIdx, _] : dependencySets) { clog << this->vars[varIdx].name << " "; }
-	clog << endl;
+	clog << "rewrote each single-use var as a direct channel." << endl;
+}
 
 
-	// Compute inverted Dependency Sets to detect which users depend on this var's definition
-	std::unordered_map<VarIdx, set<VarIdx>> invertedDependencySet;
-	for (const auto &[target, dependencies] : dependencySets) {
-		for (VarIdx dependency : dependencies) {
-			invertedDependencySet[dependency].insert(target);
+void graph::rewriteEachMultiUseVarAsCopyProcess(
+		set<petri::iterator> &umbilicalCords,
+		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
+	clog << "rewriting each multi-use var as a Copy Process." << endl;
 
-			if (not dependencySets.contains(dependency)) {
-				clog << " ? CHAN<" << this->vars[dependency].name << ">" << endl;
-			}
-		}
-	}
-
-	clog << endl << " <~~ <~~ <~~ InvDepSets" << endl;
-	std::for_each(invertedDependencySet.begin(), invertedDependencySet.end(), [this](auto &dep) {
-			clog << this->vars[dep.first].name << " <- ";
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
-			clog << endl;
-			});
-
-
-	//
-	// 2) Insert copy variables & internal-communication channels
-	//      ...in order to build Projection Sets
-	//
-	set<petri::iterator> umbilicalCords;
-
-	// Identify selections w/ multi-definition sequences,
-	// where guards/predicates need to fork into branching copies
-	// (in case we split between those defintions in projection)
-	for (const controlFlowBlock &block : this->controlFlowGraph) {
-		if (block.outs.size() < 2) { continue; }  // Ignore non-selections
-
-		// Filter for only outgoing CONDITIONAL-splits, not parallel-splits
-		//   (e.g. single outgoing split-place, not if this lastTransition is a split-transition)
-		petri::iterator lastTransition = block.transitions.back();
-		if (this->next(lastTransition).size() > 1) { continue; }  //TODO: verify: this->next or this->out?
-		//TODO: verify this wasn't too harsh a filter. what if a heterogenous split whereby there's a proper selection but in parallel with something else?
-		//  ...there could be one out-place that's a conditional split with multiple branches next to another place leading to another straightline program
-		//TODO(steven.kneiser): agreed, make this more robust to weird "(if x elif y) or (w-) and (z+)" etc
-
-		set<VarIdx> allOutGuardVars;
-		vector<Expression> outGuards;
-		unordered_map<TransitionIdx, VarIdx> outGens;
-
-		for (BlockIdx outBlockIdx : block.outs) {
-			const controlFlowBlock &outBlock = this->controlFlowGraph[outBlockIdx];
-			outGens.insert(outBlock.gens.begin(), outBlock.gens.end());
-
-			petri::iterator outTransitionIt = outBlock.transitions.front();
-			const chp::transition &outTransition = this->transitions[outTransitionIt.index];
-			//TODO(steven.kneiser): outTransition.is_valid() revalidation check even needed?
-			Expression outGuard = outTransition.guard;
-			outGuards.push_back(outGuard);
-
-			//TODO(steven.kneiser): only scrape outGuardVars from initial transition, not subsequents [at least not yet]
-			//   ...this actually seems better: we should handle simple awwaits differently from selection predicates
-			vector<VarIdx> outGuardVars = getVarsFromExpression(outGuard);
-			allOutGuardVars.insert(outGuardVars.begin(), outGuardVars.end());
-		}
-
-		if (outGens.size() < 2) { continue; }  // Ignore selections not enclosing multiple definitions
-
-		clog << endl << " # # # # # # # # (block #" << block.uid << ")" << endl;
-		clog << "* outGens)" << endl;
-		for (auto &[transitionIdx, varIdx] : outGens) { clog << "  - " << this->vars[varIdx].name << " @ " << transitionIdx << endl; }
-		clog << "* allOutGuardVars)" << endl;
-		for (VarIdx varIdx : allOutGuardVars) { clog << "  - " << this->vars[varIdx].name << endl; }
-		clog << endl;
-
-		//	cout << ">/< guard to split: " << endl;
-
-		//TODO: RETVRN HERE
-		//TODO: Great, we've found a multi-def selection!
-		//  now 1) each of these outGuards now need a copy process
-
-		//TODO: now that we've identified & set the stage for projection, save these steps for when the time is right
-		//  then 2) insert copies of this entire block??? ...or save for detection later in projection (with some explicit "splitGuards" hook)
-		//  also 3) properly substitute/replace/rewrite rule with respective new guardVar copy
-		//  then 4) document this properly in ProjectionSets
-	}
-
-
-	// Convert multi-use variables (multiple "users" in their invDepSet) into fork of branching channels
-	// NOTE(steven.kneiser): we intentionally convert all multi-use vars before any single-use vars
-	// TODO(steven.kneiser): perf optimize these mutually-exclusive subsets from 2 for-loops to 1
-	for (const auto &[dependency, users] : invertedDependencySet) {
+	for (const auto &[dependency, users] : invertedDependencySets) {
 		size_t useCount = users.size();
 		if (useCount < 2) { continue; }
 		clog << endl << "\\/\\/\\/\\/\\/ (multi-dep) "
@@ -2197,7 +2107,7 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 			this->super::connect(forkRecvTransitionIt, branchHeadIt);
 
 			clog << "++ " << channelIdx << endl
-					<< "+> " << channelSendExpr << endl;
+				<< "+> " << channelSendExpr << endl;
 			petri::iterator branchSendTransitionIt = this->super::insert_after(branchHeadIt, branchSendTransition);
 			projectionSets[varForkIdx].insert(ProjectionItem(channelIdx, true, true));
 
@@ -2236,7 +2146,7 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 			//TransitionIdx usageTransitionIdx = this->useDefChains[user].defs[0];
 			if (dependencyUseDefChain.uses.empty()) { continue; }
 			TransitionIdx use = dependencyUseDefChain.uses[copyCount];  //TODO: sloppy, is this the same branch ordering? I suspect not. This feels like it should do a lookup on the invertedDependency user's definition
-			//for (TransitionIdx use : dependencyUseDefChain.uses)
+																																	//for (TransitionIdx use : dependencyUseDefChain.uses)
 			chp::transition &usageTransition = this->transitions[use]; //usageTransitionIdx
 			usageTransition.guard.applyVars(usageRename);
 
@@ -2254,83 +2164,207 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 		this->super::erase(originalUmbilicalCordIt);
 	}
 
-
-	// Convert single-use variables (single "user" in their invDepSet) into dedicated channel
-	for (const auto &[dependency, users] : invertedDependencySet) {
-		size_t useCount = users.size();  //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
-		if (useCount != 1) { continue; }
-		clog << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ (single-dep) "  // R7->8 ...why did this feel that way?
-			<< this->vars[dependency].name << endl;
-		VarIdx user = *users.begin(); //users[0];
-
-		// Insert "CHAN.send(x); x_usage_n = CHAN.recv()" after definition
-		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
-		if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
-
-		TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
-		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "_LONE_CHAN");
+	clog << "rewrote each multi-use var as a Copy Process." << endl;
+}
 
 
-		// Insert "CHAN.send(x)"
-		arithmetic::Action usageSend;
-		arithmetic::Expression channelSendExpr = arithmetic::call(
-				"send",
-				{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(dependency)}
-				);
-		usageSend.lvalue = arithmetic::Expression::undef();
-		usageSend.rvalue = channelSendExpr;
-		chp::transition internalSendTransition(
-				arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
-		clog << "++ " << channelIdx << endl
-			<< "+> " << channelSendExpr << endl;
+void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
+		set<petri::iterator> &umbilicalCords,
+		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
+	clog << "rewriting each guard var used in multi-definition selections as a Copy Process." << endl;
 
-		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
-		projectionSets[dependency].insert(ProjectionItem(channelIdx, true, true));
+	// Identify selections w/ multi-definition sequences,
+	// where guards/predicates need to fork into branching copies
+	// (in case we split between those defintions in projection)
+	for (const controlFlowBlock &block : this->controlFlowGraph) {
+		if (block.outs.size() < 2) { continue; }  // Ignore non-selections
 
+		// Filter for only outgoing CONDITIONAL-splits, not parallel-splits
+		//   (e.g. single outgoing split-place, not if this lastTransition is a split-transition)
+		petri::iterator lastTransition = block.transitions.back();
+		if (this->next(lastTransition).size() > 1) { continue; }  //TODO: verify: this->next or this->out?
+																															//TODO: verify this wasn't too harsh a filter. what if a heterogenous split whereby there's a proper selection but in parallel with something else?
+																															//  ...there could be one out-place that's a conditional split with multiple branches next to another place leading to another straightline program
+																															//TODO(steven.kneiser): agreed, make this more robust to weird "(if x elif y) or (w-) and (z+)" etc
 
-		// Insert "x_usage_n = CHAN.recv()"
-		arithmetic::Action usageRecv;
-		arithmetic::Expression channelRecvExpr = arithmetic::call(
-				"recv",
-				{arithmetic::Expression::varOf(channelIdx)}
-				);
-		VarIdx varUsageIdx = this->getEnumeratedVar(dependency, 0, "_lone");
-		usageRecv.lvalue = arithmetic::Expression::varOf(varUsageIdx);
-		usageRecv.rvalue = channelRecvExpr;
-		chp::transition internalRecvTransition(
-				arithmetic::Expression::vdd(), arithmetic::Choice({{usageRecv}}));
-		clog << "<+ " << channelRecvExpr << endl;
+		set<VarIdx> allOutGuardVars;
+		vector<Expression> outGuards;
+		unordered_map<TransitionIdx, VarIdx> outGens;
 
-		petri::iterator umbilicalCordIt = this->super::insert_after(internalSendTransitionIt, chp::transition());
-		umbilicalCords.insert(umbilicalCordIt);
-		petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
-		projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
+		for (BlockIdx outBlockIdx : block.outs) {
+			const controlFlowBlock &outBlock = this->controlFlowGraph[outBlockIdx];
+			outGens.insert(outBlock.gens.begin(), outBlock.gens.end());
 
+			petri::iterator outTransitionIt = outBlock.transitions.front();
+			const chp::transition &outTransition = this->transitions[outTransitionIt.index];
+			//TODO(steven.kneiser): outTransition.is_valid() revalidation check even needed?
+			Expression outGuard = outTransition.guard;
+			outGuards.push_back(outGuard);
 
-		// Substitute "x_usage_n" for x in usage
-		Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
-		usageRename.set(dependency, varUsageIdx);
-		for (VarIdx user : users) {
-			set<ProjectionItem> &p = projectionSets[user];
-			p.erase(ProjectionItem(dependency));
-			p.insert(ProjectionItem(varUsageIdx));
+			//TODO(steven.kneiser): only scrape outGuardVars from initial transition, not subsequents [at least not yet]
+			//   ...this actually seems better: we should handle simple awwaits differently from selection predicates
+			vector<VarIdx> outGuardVars = getVarsFromExpression(outGuard);
+			allOutGuardVars.insert(outGuardVars.begin(), outGuardVars.end());
 		}
 
-		if (dependencyUseDefChain.uses.empty()) { continue; }
-		for (TransitionIdx use : dependencyUseDefChain.uses) { //TODO: shouldn't this always be .size()==1? It's a lone var? Maybe used in guard of a non-assignment!
-			chp::transition &usageTransition = this->transitions[use];
-			usageTransition.guard.applyVars(usageRename);
+		if (outGens.size() < 2) { continue; }  // Ignore selections not enclosing multiple definitions
 
-			arithmetic::Choice &choice = usageTransition.action;
-			for (arithmetic::Parallel &term : choice.terms) {
-				for (arithmetic::Action &action : term.actions) {
-					action.rvalue.applyVars(usageRename);
-					//TODO: what if there are multiple uses of the same variable within this assignment? seems less an issue the more I consider it
+		clog << endl << " # # # # # # # # (block #" << block.uid << ")" << endl;
+		clog << "* outGens)" << endl;
+		for (auto &[transitionIdx, varIdx] : outGens) { clog << "  - " << this->vars[varIdx].name << " @ " << transitionIdx << endl; }
+		clog << "* allOutGuardVars)" << endl;
+		for (VarIdx varIdx : allOutGuardVars) { clog << "  - " << this->vars[varIdx].name << endl; }
+		clog << endl;
+
+		//	cout << ">/< guard to split: " << endl;
+
+		//TODO: RETVRN HERE
+		//TODO: Great, we've found a multi-def selection!
+		//  now 1) each of these outGuards now need a copy process
+
+		//TODO: now that we've identified & set the stage for projection, save these steps for when the time is right
+		//  then 2) insert copies of this entire block??? ...or save for detection later in projection (with some explicit "splitGuards" hook)
+		//  also 3) properly substitute/replace/rewrite rule with respective new guardVar copy
+		//  then 4) document this properly in ProjectionSets
+	}
+
+	clog << "rewrote each guard var used in multi-definition selections as a Copy Process." << endl;
+}
+
+
+unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
+	clog << endl << "computing projection sets." << endl;
+
+	unordered_map<VarIdx, vector<VarIdx>> dependencySets;
+	unordered_map<VarIdx, set<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
+																															//TODO(steven.kneiser): document intended diff between depSets & projSets ...is it just using ProjectionItem's properly for channels?
+																															//    ...since depSets are mainly for computing invDepSets while projSets are for the ultimate final projection
+
+																															//TODO(steven.kneiser): great work! Now clean out all "in/out channel" comments & detection schemes now that we have ProjectionItems. Review if this is still the cleanest
+
+
+																															//
+																															// 1) Build Dependency Sets
+																															//      ...in order to build Projection Sets
+																															//
+																															//TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets! they can have multi-uses (do we support those yet?)
+	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
+		if (not this->transitions.is_valid(transitionIdx)) { continue; }
+
+		// Extract Dependency Set from transition, if there is any
+		const chp::transition &transition = this->transitions[transitionIdx];
+		vector<VarIdx> guardVars = getVarsFromExpression(transition.guard);
+
+		const arithmetic::Choice &action = transition.action;
+		for (const auto &term : action.terms) {
+			for (const auto &action : term.actions) {
+				vector<VarIdx> leftVars = getVarsFromExpression(action.lvalue);
+
+				//TODO: is_definition parameter could be more robust ":=" assignment operand matching
+				vector<VarIdx> rightVars = getVarsFromExpression(action.rvalue);
+				vector<VarIdx> inputChannelsUsed = findInputChannelsInExpression(action.rvalue);
+				vector<VarIdx> outputChannelsUsed = findOutputChannelsInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
+
+				// If not assignment, check for output-channel (a.k.a. "send()") which is assignment-ish
+				//TODO: there must be a better way to pre-index not just channels vs vars DURING synthesis but beforehand
+				//  AND it should somehow index the partition between input vs output channels (perhaps, in-only, out-only, and bi-use'd?)
+				//  within "bi-used" we can separate "internal-communication only" channels vs bi-used chans w/ external side-effects/dependencies
+				if (leftVars.empty()) {
+					if (outputChannelsUsed.empty()) { continue; }
+
+					VarIdx outputChannel = outputChannelsUsed[0]; //TODO: support more than one outputChannel per transition
+					clog << " ! CHAN<" << this->vars[outputChannel].name << ">" << endl;
+
+					// Prune redundant self from right-hand side
+					rightVars.erase(std::remove(rightVars.begin(), rightVars.end(), outputChannel), rightVars.end());
+					dependencySets[outputChannel].insert(dependencySets[outputChannel].begin(), rightVars.begin(), rightVars.end());
+					projectionSets[outputChannel].insert(rightVars.begin(), rightVars.end());
+					//TODO(steven.kneiser): why, for example, do these projectionSets not get inserted the same as the for-loop? Shouldn't it be either?
+					//   Etiher we're matching depSets or doing the for-loop I would assume
+
+					for (VarIdx var : rightVars) {
+						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
+							projectionSets[outputChannel].insert(ProjectionItem(var, true, false));
+
+						} else {
+							projectionSets[outputChannel].insert(ProjectionItem(var));
+						}
+					}
+					projectionSets[outputChannel].insert(ProjectionItem(outputChannel, true, true));
+
+					// Not an output channel, set DependencySet 
+				} else {
+					//TODO(steven.kneiser): Support more complex assignments like multi-variable tuples
+					//  or vector-assignment in lvalue, instead of a lone variable (e.g. `(x, y) = (5, 4)`, maybe even `-x = 3`??)
+					VarIdx assignedVar = leftVars[0];
+					dependencySets[assignedVar].insert(dependencySets[assignedVar].begin(), rightVars.begin(), rightVars.end());
+					//projectionSets[assignedVar].insert(rightVars.begin(), rightVars.end());
+
+					for (VarIdx var : rightVars) {
+						if (find(inputChannelsUsed.begin(), inputChannelsUsed.end(), var) != inputChannelsUsed.end()) {
+							projectionSets[assignedVar].insert(ProjectionItem(var, true, false));
+
+						} else {
+							projectionSets[assignedVar].insert(ProjectionItem(var));
+						}
+					}
+					projectionSets[assignedVar].insert(ProjectionItem(assignedVar));
 				}
 			}
 		}
 	}
+
+
+	//TODO(steven.kneiser): print & dehug/verify useDefChains again
+	clog << endl << " ~~> ~~> ~~> DepSets" << endl;
+	std::for_each(dependencySets.begin(), dependencySets.end(), [this](auto &dep) {
+			clog << this->vars[dep.first].name << " <- ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
+			clog << endl;
+			});
+
+	//TODO(steven.kneiser): verify Dependency Sets & ensure only channel-Sends are included
+	//TODO(steven.kneiser): verifying these Sets are a great test suite opportunity
+	clog << endl << " ~> ~> ~> defs/targets: ";
+	for (const auto &[varIdx, _] : dependencySets) { clog << this->vars[varIdx].name << " "; }
+	clog << endl;
+
+
+	// Compute inverted Dependency Sets to detect which users depend on this var's definition
+	std::unordered_map<VarIdx, set<VarIdx>> invertedDependencySets;
+	for (const auto &[target, dependencies] : dependencySets) {
+		for (VarIdx dependency : dependencies) {
+			invertedDependencySets[dependency].insert(target);
+
+			if (not dependencySets.contains(dependency)) {
+				clog << " ? CHAN<" << this->vars[dependency].name << ">" << endl;
+			}
+		}
+	}
+
+	clog << endl << " <~~ <~~ <~~ InvDepSets" << endl;
+	std::for_each(invertedDependencySets.begin(), invertedDependencySets.end(), [this](auto &dep) {
+			clog << this->vars[dep.first].name << " <- ";
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
+			clog << endl;
+			});
+
+
+	//
+	// 2) Insert copy variables & internal-communication channels
+	//      ...in order to build Projection Sets
+	//
+	set<petri::iterator> umbilicalCords;
+	//TODO(steven.kneiser): wait, where are these getting cut now? Do we no longer cut them? No! Now we just instantiate subprocesses!
+
+	this->rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(umbilicalCords, invertedDependencySets, projectionSets);
+	//TODO(steven.kneiser): ugh, what's the right way to deduplicate the copy processes from these seperate methods? How should these be pre-merged?
+	this->rewriteEachMultiUseVarAsCopyProcess(umbilicalCords, invertedDependencySets, projectionSets);
+	// NOTE(steven.kneiser): we intentionally convert all multi-use vars before any single-use vars
+	//TODO(steven.kneiser): perf optimize these mutually-exclusive subsets from 2 for-loops to 1
+	//  ...better idea, merge this entire section as: this->rewriteAssignmentsAsChannels(); ???
+	this->rewriteEachSingleUseVarAsDirectChannel(umbilicalCords, invertedDependencySets, projectionSets);
 
 
 	clog << endl << "  # ## ### < PS> ### ## #  " << endl;
