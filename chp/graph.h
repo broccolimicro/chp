@@ -250,17 +250,20 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
 	void renameVarAtTransition(VarIdx varIdx, TransitionIdx transitionIdx);
 
-	//TODO(steven.kneiser): same signatures ...remerge? this->rewriteAssignmentsAsChannels()
+	//TODO(steven.kneiser): ideal API: just pass DSA'd VarIdx & let these helpers search & identify the defining definition
+	void rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx channelIdx);
+	void rewriteAssignmentAsCopyProcess(TransitionIdx transitionIdx, VarIdx channelIdx, size_t copyCount);
+
+	void rewriteAssignmentsAsChannels(
+			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
 	void rewriteEachSingleUseVarAsDirectChannel(
-			set<petri::iterator> &umbilicalCords,
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
 	void rewriteEachMultiUseVarAsCopyProcess(
-			set<petri::iterator> &umbilicalCords,
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
 	void rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
-			set<petri::iterator> &umbilicalCords,
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
 	unordered_map<VarIdx, set<ProjectionItem>> computeProjectionSets();

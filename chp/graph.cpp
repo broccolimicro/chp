@@ -422,7 +422,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 				vector<vector<petri::iterator> > np;
 				for (int l = 0; l < (int)n.size(); l++) {
 					np.push_back(prev(n[l]));
-					np.back().erase(std::remove(np.back().begin(), np.back().end(), i), np.back().end()); 
+					np.back().erase(std::remove(np.back().begin(), np.back().end(), i), np.back().end());
 				}
 
 				for (int k = 0; k < (int)passive.size(); k++) {
@@ -1919,12 +1919,80 @@ bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionIt
 
 
 
+// Rewrite "g -> b := a" with a new Channel, c, as "g -> c.send(a)" & "g -> b := c.recv()" in parallel
+void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx channelIdx) {
+
+	if (not this->transitions.is_valid(transitionIdx)) { return; }
+	const chp::transition &transition = this->transitions[transitionIdx];
+	//TODO(steven.kneiser): const?
+	VarIdx varAssigned;
+
+	//TODO(steven.kneiser): isAssignment() expression helper in chp::transition? ...it could return the VarIdx of the varAssigned! Return an optional?
+	bool isAssignment = false;
+	const arithmetic::Choice &choice = transition.action;
+	for (const arithmetic::Parallel &term : choice.terms) {
+		for (const arithmetic::Action &action : term.actions) {
+			if (not action.lvalue.isUndef()) {
+				isAssignment = true;
+				varAssigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+			}
+			break;  //TODO(steven.kneiser): why was this here, even in the `getPreviousDefinitions()` above that I pasted it from?
+		}
+	}
+	if (not isAssignment) { return; }
+	//TODO(steven.kneiser): do we need to preserve guard too? guard both new expressions?
+	//      ...for simplicity we could introduce a "g -> skip" beforehand, instead of distributing it
+	// ahhh, we need to crawl for all, not just isAssignment prop (e.g. rval needed for
+
+
+	// Insert "c.send(a)" after original transition
+	arithmetic::Action sendAction;
+	arithmetic::Expression sendExpr = arithmetic::call(
+			"send",
+			{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(varAssigned)}
+			);
+	sendAction.lvalue = arithmetic::Expression::undef();
+	sendAction.rvalue = sendExpr;
+	chp::transition sendTransition(
+			arithmetic::Expression::vdd(), arithmetic::Choice({{sendAction}}));
+	clog << "++ " << channelIdx << endl
+		<< "+> " << sendExpr << endl;
+
+	petri::iterator transitionIt(petri::transition::type, transitionIdx);
+	petri::iterator sendTransitionIt = this->super::insert_after(transitionIt, sendTransition);
+
+
+	// Insert "b = c,recv()" in parallel with "c.send(a)" to each outgoing transition
+	arithmetic::Action recvAction;
+	arithmetic::Expression recvExpr = arithmetic::call(
+			"recv",
+			{arithmetic::Expression::varOf(channelIdx)}
+			);
+	recvAction.lvalue = arithmetic::Expression::varOf(varAssigned);
+	recvAction.rvalue = recvExpr;
+	chp::transition recvTransition(
+			arithmetic::Expression::vdd(), arithmetic::Choice({{recvAction}}));
+	clog << "<+ " << recvExpr << endl;
+
+	petri::iterator from(petri::transition::type, transitionIt.index);
+	//TODO(steven.kneiser): shouldn't insert_alongside() eloquently handle all these already?
+	for (petri::iterator outPlace : this->next(sendTransitionIt)) {
+		for (petri::iterator to : this->next(outPlace)) {
+			petri::iterator recvTransitionIt = this->super::insert_alongside(from, to, recvTransition);
+		}
+	}
+
+	// Remove original assignment's transition
+	//this->pinch(transitionIt);
+	//TODO(steven.kneiser): oops, we can't yeet yet ....not til we push rval into sender
+}
+
+
 
 
 //TODO: find what's shared between these two helpers (direct vs copy) & can be wrapped (e.g. assignment->petri? rewriteAssignmentAsChannel() ???)
 //TODO: verfiy that function name functionally matches whatever eventual type signature
 void graph::rewriteEachSingleUseVarAsDirectChannel(
-		set<petri::iterator> &umbilicalCords,
 		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
 	clog << "rewriting each single-use var as a direct channel." << endl;
@@ -1946,44 +2014,19 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "_LONE_CHAN");
 
 
-		// Insert "CHAN.send(x)"
-		arithmetic::Action usageSend;
-		arithmetic::Expression channelSendExpr = arithmetic::call(
-				"send",
-				{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(dependency)}
-				);
-		usageSend.lvalue = arithmetic::Expression::undef();
-		usageSend.rvalue = channelSendExpr;
-		chp::transition internalSendTransition(
-				arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
-		clog << "++ " << channelIdx << endl
-			<< "+> " << channelSendExpr << endl;
+		//TODO: rename usages THEN THEN THEN subsitute channel, no longer at the same time
+		//      ...for legibility (I'll also likely tease out some subtle bugs in this disambiguation)
 
-		petri::iterator internalSendTransitionIt = this->super::insert_after(defTransitionIt, internalSendTransition);
+		// Rewrite "x = ..." as "CHAN.send(x)" & "x_usage_n = CHAN.recv()" in parallel
+		this->rewriteAssignmentAsChannel(defTransitionIt.index, channelIdx);
+
 		projectionSets[dependency].insert(ProjectionItem(channelIdx, true, true));
-
-
-		// Insert "x_usage_n = CHAN.recv()"
-		arithmetic::Action usageRecv;
-		arithmetic::Expression channelRecvExpr = arithmetic::call(
-				"recv",
-				{arithmetic::Expression::varOf(channelIdx)}
-				);
-		VarIdx varUsageIdx = this->getEnumeratedVar(dependency, 0, "_lone");
-		usageRecv.lvalue = arithmetic::Expression::varOf(varUsageIdx);
-		usageRecv.rvalue = channelRecvExpr;
-		chp::transition internalRecvTransition(
-				arithmetic::Expression::vdd(), arithmetic::Choice({{usageRecv}}));
-		clog << "<+ " << channelRecvExpr << endl;
-
-		petri::iterator umbilicalCordIt = this->super::insert_after(internalSendTransitionIt, chp::transition());
-		umbilicalCords.insert(umbilicalCordIt);
-		petri::iterator internalRecvTransitionIt = this->super::insert_after(umbilicalCordIt, internalRecvTransition);
 		projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
-
+		//TODO(steven.kneiser): verify nothing needs to be REMOVED from Projection Sets after rewrite
 
 		// Substitute "x_usage_n" for x in usage
-		Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
+		VarIdx varUsageIdx = this->getEnumeratedVar(dependency, 0, "_lone");
+		Mapping<VarIdx> usageRename(std::numeric_limits<VarIdx>::max(), true);
 		usageRename.set(dependency, varUsageIdx);
 
 		set<ProjectionItem> &p = projectionSets[user];
@@ -2009,8 +2052,10 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 }
 
 
+void graph::rewriteAssignmentAsCopyProcess(TransitionIdx transitionIdx, VarIdx channelIdx, size_t copyCount) {}
+
+
 void graph::rewriteEachMultiUseVarAsCopyProcess(
-		set<petri::iterator> &umbilicalCords,
 		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
 	clog << "rewriting each multi-use var as a Copy Process." << endl;
@@ -2043,6 +2088,13 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 		//projectionSets[dependency].insert(varForkIdx); //TODO: be careful of renamed x vs x_fork which I'm still ambiguous what I prefer, but I've already remapped everywhere to x_fork wherever appropriate
 		clog << "++ " << forkChannelIdx << endl;
 
+		//TODO(steven.kneiser): RETVRN HERE opportunity to abstract out "create copy process"
+		// for use with deduping guard-split copyprocs vs multi-use copyprocs (or perhaps those should be handled as one merged batch before we do those two?
+
+		projectionSets[dependency].insert(ProjectionItem(forkChannelIdx, true, true));
+		projectionSets[varForkIdx].insert(ProjectionItem(forkChannelIdx, true, false));
+
+		//this->rewriteAssignmentAsChannel(defTransitionIdx, forkChannelIdx);
 
 		// Insert "this.guard -> CHAN.send(x)"
 		Expression channelSendExpr = arithmetic::call(
@@ -2055,7 +2107,6 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 		chp::transition forkSendTransition(guard, arithmetic::Choice({{forkSend}}));
 
 		petri::iterator forkSendTransitionIt = this->super::insert_after(defTransitionIt, forkSendTransition);
-		projectionSets[dependency].insert(ProjectionItem(forkChannelIdx, true, true));
 
 
 		// Insert "x_fork := CHAN.recv()"
@@ -2066,9 +2117,8 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 		chp::transition forkRecvTransition(Expression::vdd(), arithmetic::Choice({{forkRecv}}));
 
 		petri::iterator umbilicalCordIt = this->super::insert_after(forkSendTransitionIt, chp::transition());
-		umbilicalCords.insert(umbilicalCordIt);
+		//TODO(steven.kneiser): pinch this cord? new post-umbilical approach?
 		petri::iterator forkRecvTransitionIt = this->super::insert_after(umbilicalCordIt, forkRecvTransition);
-		projectionSets[varForkIdx].insert(ProjectionItem(forkChannelIdx, true, false));
 
 
 		//TODO: SLOPPY HACK to get next transition as hook for spawning parallel branchs with the same source & target
@@ -2166,7 +2216,6 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 
 
 void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
-		set<petri::iterator> &umbilicalCords,
 		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
 	clog << "rewriting each guard var used in multi-definition selections as a Copy Process." << endl;
@@ -2223,7 +2272,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 		//  now 1) each of these outGuards now need a copy process
 		//////set<VarIdx> _copiedVars;  //TODO(steven.kneiser): dedup copyProcesses by sharing/externalizing this vars
 		//////for (VarIdx varIdx : allOutGuardVars) {
-		//////	
+		//////
 		//////}
 
 		//TODO: now that we've identified & set the stage for projection, save these steps for when the time is right
@@ -2236,22 +2285,50 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 }
 
 
+void graph::rewriteAssignmentsAsChannels(
+		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
+	clog << "rewriting assignments as channels." << endl;
+
+	//TODO(steven.kneiser): wait, where are these getting cut now? Do we no longer cut them? No! Now we just instantiate subprocesses! Snip them from the codebase!
+	set<VarIdx> _copiedVars;  //TODO(steven.kneiser): dedup guard splitting & copy-variables with shared todo set
+	unordered_map<VarIdx, set<TransitionIdx>> copyProcesses; //copySets?
+
+
+	//NOTE(steven.kneiser): these guard vars, even though often not referenced or "used" directly in definition, are certainly "used" indirectly
+	//    ...to select the specific control-flow branches where that definition is executed
+	this->rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(invertedDependencySets, projectionSets);
+	//TODO(steven.kneiser): ugh, what's the right way to deduplicate the copy processes from these seperate methods? How should these be pre-merged?
+	this->rewriteEachMultiUseVarAsCopyProcess(invertedDependencySets, projectionSets);
+	// NOTE(steven.kneiser): we intentionally convert all multi-use vars before any single-use vars
+	//TODO(steven.kneiser): perf optimize these mutually-exclusive subsets from 2 for-loops to 1
+	this->rewriteEachSingleUseVarAsDirectChannel(invertedDependencySets, projectionSets);
+
+	//TODO(steven.kneiser): these funcs would be cleaner if they surfaced the I/O decision of "okay now rewrite that one"
+	//    ...it seems much cleaner to have someone rewrite/change the assignment, then merely provide a func that accepts the name of the channel to rewrite that assignment as surface THAT policy decision.NNNBBB
+
+	//TODO(steven.kneiser): aha, create assignment->channel helper with optional?mandatory channel-name
+
+	clog << "rewrote assignments as channels." << endl;
+}
+
+
 unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 	clog << endl << "computing projection sets." << endl;
 
 	unordered_map<VarIdx, vector<VarIdx>> dependencySets;
-	unordered_map<VarIdx, set<ProjectionItem>> projectionSets;  //TODO: assign more efficiently after populating dependencySets in full
-																															//TODO(steven.kneiser): document intended diff between depSets & projSets ...is it just using ProjectionItem's properly for channels?
-																															//    ...since depSets are mainly for computing invDepSets while projSets are for the ultimate final projection
+	unordered_map<VarIdx, set<ProjectionItem>> projectionSets;
+	//TODO: assign more efficiently after populating dependencySets in full
+	//TODO(steven.kneiser): document intended diff between depSets & projSets ...is it just using ProjectionItem's properly for channels?
+	//    ...since depSets are mainly for computing invDepSets while projSets are for the ultimate final projection
 
-																															//TODO(steven.kneiser): great work! Now clean out all "in/out channel" comments & detection schemes now that we have ProjectionItems. Review if this is still the cleanest
+	//TODO(steven.kneiser): great work! Now clean out all "in/out channel" comments & detection schemes now that we have ProjectionItems. Review if this is still the cleanest
 
 
-																															//
-																															// 1) Build Dependency Sets
-																															//      ...in order to build Projection Sets
-																															//
-																															//TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets! they can have multi-uses (do we support those yet?)
+	//
+	// 1) Build Dependency Sets
+	//
+	//TODO: vector -> set? t'sin the name bro -- WAIT, they're NOT sets! they can have multi-uses (do we support those yet?)
 	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
 		if (not this->transitions.is_valid(transitionIdx)) { continue; }
 
@@ -2296,7 +2373,7 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 					}
 					projectionSets[outputChannel].insert(ProjectionItem(outputChannel, true, true));
 
-					// Not an output channel, set DependencySet 
+					// Not an output channel, set DependencySet
 				} else {
 					//TODO(steven.kneiser): Support more complex assignments like multi-variable tuples
 					//  or vector-assignment in lvalue, instead of a lone variable (e.g. `(x, y) = (5, 4)`, maybe even `-x = 3`??)
@@ -2334,7 +2411,9 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 	clog << endl;
 
 
-	// Compute inverted Dependency Sets to detect which users depend on this var's definition
+	//
+	// 2) Invert Dependency Sets, to detect which users depend on this var's definition
+	//
 	std::unordered_map<VarIdx, set<VarIdx>> invertedDependencySets;
 	for (const auto &[target, dependencies] : dependencySets) {
 		for (VarIdx dependency : dependencies) {
@@ -2349,25 +2428,16 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 	clog << endl << " <~~ <~~ <~~ InvDepSets" << endl;
 	std::for_each(invertedDependencySets.begin(), invertedDependencySets.end(), [this](auto &dep) {
 			clog << this->vars[dep.first].name << " <- ";
-			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](size_t varIdx) { return this->vars[varIdx].name; });
+			std::transform(dep.second.begin(), dep.second.end(), ostream_iterator<string>(clog, ", "), [this](VarIdx varIdx) { return this->vars[varIdx].name; });
 			clog << endl;
 			});
 
 
 	//
-	// 2) Insert copy variables & internal-communication channels
+	// 3) Insert copy variables & internal-communication channels
 	//      ...in order to build Projection Sets
 	//
-	set<petri::iterator> umbilicalCords;
-	//TODO(steven.kneiser): wait, where are these getting cut now? Do we no longer cut them? No! Now we just instantiate subprocesses!
-
-	this->rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(umbilicalCords, invertedDependencySets, projectionSets);
-	//TODO(steven.kneiser): ugh, what's the right way to deduplicate the copy processes from these seperate methods? How should these be pre-merged?
-	this->rewriteEachMultiUseVarAsCopyProcess(umbilicalCords, invertedDependencySets, projectionSets);
-	// NOTE(steven.kneiser): we intentionally convert all multi-use vars before any single-use vars
-	//TODO(steven.kneiser): perf optimize these mutually-exclusive subsets from 2 for-loops to 1
-	//  ...better idea, merge this entire section as: this->rewriteAssignmentsAsChannels(); ???
-	this->rewriteEachSingleUseVarAsDirectChannel(umbilicalCords, invertedDependencySets, projectionSets);
+	this->rewriteAssignmentsAsChannels(invertedDependencySets, projectionSets);
 
 
 	clog << endl << "  # ## ### < PS> ### ## #  " << endl;
@@ -2440,7 +2510,7 @@ vector<graph> graph::project() {
 				}
 				if (disqualifyingItemFound) { break; }
 			}
-			if (disqualifyingItemFound) { 
+			if (disqualifyingItemFound) {
 				toDelete.push_back(transitionIdx);
 			}
 		}
