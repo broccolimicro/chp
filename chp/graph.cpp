@@ -1507,6 +1507,7 @@ unordered_map<VarIdx, VarDSAIdx> graph::mergeDefinitionsBeforeBlock(size_t block
 	return liveDefinitions;
 }
 
+
 VarIdx graph::getEnumeratedVar(VarIdx varIdx, VarDSAIdx num, string delimiter) {
 	string enumeratedName = this->vars[varIdx].name + delimiter + std::to_string(num);
 
@@ -1522,14 +1523,6 @@ VarIdx graph::getEnumeratedVar(VarIdx varIdx, VarDSAIdx num, string delimiter) {
 	return enumeratedVarIdx;
 }
 
-void _debugPrint(queue<size_t> s) {
-	clog << ">> queue: ";
-	while (!s.empty()) {
-		clog << s.front() << " ";
-		s.pop();
-	}
-	clog << endl;
-}
 
 void graph::convertToDSA() {
 	this->computeControlFlowGraph();
@@ -1549,8 +1542,12 @@ void graph::convertToDSA() {
 	while (not worklist.empty()) {
 		workCount++;
 
+		clog << endl << ">> queue: ";
+		while (!worklist.empty()) {
+			clog << worklist.front() << " ";
+			worklist.pop();
+		}
 		clog << endl;
-		_debugPrint(worklist);
 
 		//TODO: remove watchdog once we fully support DSA repetition (including nested repetition)
 		if (workCount > MAX_DSA_ITERATION) {
@@ -1994,7 +1991,7 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		p.insert(ProjectionItem(varUsageIdx));
 
 		if (dependencyUseDefChain.uses.empty()) { continue; }
-		for (TransitionIdx use : dependencyUseDefChain.uses) { //TODO: shouldn't this always be .size()==1? It's a lone var? Maybe used in guard of a non-assignment!
+		for (TransitionIdx use : dependencyUseDefChain.uses) {  //TODO: shouldn't this always be .size()==1? It's a lone var? Maybe used in guard of a non-assignment!
 			chp::transition &usageTransition = this->transitions[use];
 			usageTransition.guard.applyVars(usageRename);
 
@@ -2132,7 +2129,7 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 
 
 			// Substitute "x_cp_n" for x usages
-			Mapping<size_t> usageRename(std::numeric_limits<size_t>::max(), true);
+			Mapping<VarIdx> usageRename(std::numeric_limits<VarIdx>::max(), true);
 			usageRename.set(dependency, varUsageIdx);
 			//TODO: or is it fork-instead-of-dependency that needs to be replaced? triple-check
 			for (VarIdx user : users) {
@@ -2183,10 +2180,11 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 		// Filter for only outgoing CONDITIONAL-splits, not parallel-splits
 		//   (e.g. single outgoing split-place, not if this lastTransition is a split-transition)
 		petri::iterator lastTransition = block.transitions.back();
-		if (this->next(lastTransition).size() > 1) { continue; }  //TODO: verify: this->next or this->out?
-																															//TODO: verify this wasn't too harsh a filter. what if a heterogenous split whereby there's a proper selection but in parallel with something else?
-																															//  ...there could be one out-place that's a conditional split with multiple branches next to another place leading to another straightline program
-																															//TODO(steven.kneiser): agreed, make this more robust to weird "(if x elif y) or (w-) and (z+)" etc
+		if (this->next(lastTransition).size() > 1) { continue; }
+		//TODO: verify: this->next or this->out?
+		//TODO: verify this wasn't too harsh a filter. what if a heterogenous split whereby there's a proper selection but in parallel with something else?
+		//  ...there could be one out-place that's a conditional split with multiple branches next to another place leading to another straightline program
+		//TODO(steven.kneiser): agreed, make this more robust to weird "(if x elif y) or (w-) and (z+)" etc
 
 		set<VarIdx> allOutGuardVars;
 		vector<Expression> outGuards;
@@ -2210,6 +2208,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 		if (outGens.size() < 2) { continue; }  // Ignore selections not enclosing multiple definitions
 
+		// Just for debugging
 		clog << endl << " # # # # # # # # (block #" << block.uid << ")" << endl;
 		clog << "* outGens)" << endl;
 		for (auto &[transitionIdx, varIdx] : outGens) { clog << "  - " << this->vars[varIdx].name << " @ " << transitionIdx << endl; }
@@ -2220,8 +2219,12 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 		//	cout << ">/< guard to split: " << endl;
 
 		//TODO: RETVRN HERE
-		//TODO: Great, we've found a multi-def selection!
+		//Great, we've found a multi-def selection!
 		//  now 1) each of these outGuards now need a copy process
+		//////set<VarIdx> _copiedVars;  //TODO(steven.kneiser): dedup copyProcesses by sharing/externalizing this vars
+		//////for (VarIdx varIdx : allOutGuardVars) {
+		//////	
+		//////}
 
 		//TODO: now that we've identified & set the stage for projection, save these steps for when the time is right
 		//  then 2) insert copies of this entire block??? ...or save for detection later in projection (with some explicit "splitGuards" hook)
