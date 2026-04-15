@@ -1543,9 +1543,10 @@ void graph::convertToDSA() {
 		workCount++;
 
 		clog << endl << ">> queue: ";
-		while (!worklist.empty()) {
-			clog << worklist.front() << " ";
-			worklist.pop();
+		queue<size_t> worklistSnapshot(worklist);
+		while (not worklistSnapshot.empty()) {
+			clog << worklistSnapshot.front() << " ";
+			worklistSnapshot.pop();
 		}
 		clog << endl;
 
