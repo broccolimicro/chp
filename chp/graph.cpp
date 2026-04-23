@@ -1918,10 +1918,81 @@ bool isDisqualifyingItemInExpression(const Expression &e, const set<ProjectionIt
 }
 
 
+void graph::remapVarInTransition(VarIdx from, VarIdx to, TransitionIdx transitionIdx, bool remapGuard, bool remapLHS, bool remapRHS) {
+	if (not this->transitions.is_valid(transitionIdx)) { return; }
+	chp::transition &transition = this->transitions[transitionIdx];
+
+	//TODO(steven.kneiser): perf optimization: just preserve Mapping. Perhaps this should just be called "remapTransition()"
+	Mapping<VarIdx> varSubstitution(std::numeric_limits<VarIdx>::max(), true);
+	varSubstitution.set(from, to);
+
+	if (remapGuard) { transition.guard.applyVars(varSubstitution); }
+	arithmetic::Choice &choice = transition.action;
+	for (arithmetic::Parallel &term : choice.terms) {
+		for (arithmetic::Action &action : term.actions) {
+			if (remapLHS) { action.lvalue.applyVars(varSubstitution); }
+			if (remapRHS) { action.rvalue.applyVars(varSubstitution); }
+			//TODO(steven.kneiser): support multiple uses of a var in an RHS expr that need CopyProcesses to remap each usage to a seperate branch?
+		}
+	}
+
+	//TODO(steven.kneiser): perhaps HERE is where useDef should be updated?? lower-level and more atomic down here. Seems sensible@!!
+	//  ...I'm already noticing this pattern of prepending every remap call with appropriate useDef pruning which is also just a sloppy way of more precisely retargeting
+}
+
+
+//NOTE(steven.kneiser): Currently, this rewrite is a minimal subsitution, only for remapping transitions that use one var to another
+//  ...meh, I actually like the usability of the name "inAllTransitions" too.
+//  Ideally, we make the atomic "remap-in-1-Transition()" more surgical/composable/extensible, that we encapsulate remappings with that helper.
+//  I like the thought of separate InAllTransitions() & some sort of "InTransitionsByUseDef()"
+//TODO(steven.kneiser): "substituteVarInTransitions()" a more intuitive name>
+//TODO(steven.kneiser): remake as a light wrapper around some more atomic "remapVarInTransition()"
+void graph::remapVarInEachTransition(VarIdx from, VarIdx to, bool rewriteDefinitions, bool rewriteUses) {  //bool rewriteGuard, bool rewriteLexprs, bool rewriteRexprs
+	clog << "rewriting var." << endl;
+
+	if (from >= this->vars.size()) { clog << "'from' var @" << from << " is out-of-range for this->vars: " << this->vars.size() << endl; return; }
+	if (  to >= this->vars.size()) { clog << "  'to' var @" <<   to << " is out-of-range for this->vars: " << this->vars.size() << endl; return; }
+	clog << "  from `" << this->vars[from].name << "` to `" << this->vars[to].name << "`" << endl;
+
+	if (not this->useDefChainsReady) { this->computeUseDefChains(); }
+	if (not this->useDefChains.contains(from)) { clog << "'from' var @" << from << " -> `" << this->vars[from].name << "` not found in this->useDefChains" << endl; return; }
+	const useDefChain &useDefChain = this->useDefChains[from];
+	//TODO(steven.kneiser): not necessarry, but might we ever want to explore the `to` useDefChain?
+
+	// Substitute `to` for `from`
+	set<TransitionIdx> transitionsToRewrite;
+	//if (useDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd/used input-channel
+	if (rewriteDefinitions) { transitionsToRewrite.insert(useDefChain.defs.begin(), useDefChain.defs.end()); }
+	//if (useDefChain.uses.empty()) { continue; }
+	if (rewriteUses) { transitionsToRewrite.insert(useDefChain.uses.begin(), useDefChain.uses.end()); }
+	if (transitionsToRewrite.empty()) { return; }
+
+	Mapping<VarIdx> varSubstitution(std::numeric_limits<VarIdx>::max(), true);
+	varSubstitution.set(from, to);
+
+	//TODO(steven.kneiser): Update ProjectionSets too! Oh crap, will there be any only-partial updates due to def vs use rewrites?
+	//set<ProjectionItem> &p = projectionSets[user];
+	//p.erase(ProjectionItem(dependency));
+	//p.insert(ProjectionItem(varUsageIdx));
+
+	//TODO(steven.kneiser): is it safer to just walk all valid transitions for now? would be simpler to not rely on useDef,
+	//  but perhaps would rely too strongly on DSA/single-use, when there are multi-uses that need to be forked w/ Copy Processes
+	//  no problem, just be more mindful in the calls to this from Copy Process creation
+	
+
+	for (TransitionIdx transitionIdx : transitionsToRewrite) {
+		if (not this->transitions.is_valid(transitionIdx)) { continue; }  //NOTE(steven.kneiser): redundant safety-check with helper, kept for future reference
+		this->remapVarInTransition(from, to, transitionIdx);
+	}
+
+	clog << "rewrote var." << endl;
+}
 
 
 // Rewrite "g -> b := a" with a new Channel, c, as "g -> c.send(a)" & "g -> b := c.recv()" in parallel
+//TODO(steven.kneiser): let's prefer seperation of concerns -> -> "g -> skip; (c.send(a) || b := c.recv())"
 void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx channelIdx) {
+	clog << "rewriting assignment as channel." << endl;
 
 	if (not this->transitions.is_valid(transitionIdx)) { return; }
 	const chp::transition &transition = this->transitions[transitionIdx];
@@ -1930,27 +2001,25 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 
 	//TODO(steven.kneiser): isAssignment() expression helper in chp::transition? ...it could return the VarIdx of the varAssigned! Return an optional?
 	bool isAssignment = false;
+	Expression rexpr;
 	const arithmetic::Choice &choice = transition.action;
 	for (const arithmetic::Parallel &term : choice.terms) {
 		for (const arithmetic::Action &action : term.actions) {
 			if (not action.lvalue.isUndef()) {
 				isAssignment = true;
 				varAssigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+				rexpr = action.rvalue;
 			}
 			break;  //TODO(steven.kneiser): why was this here, even in the `getPreviousDefinitions()` above that I pasted it from?
 		}
 	}
 	if (not isAssignment) { return; }
-	//TODO(steven.kneiser): do we need to preserve guard too? guard both new expressions?
-	//      ...for simplicity we could introduce a "g -> skip" beforehand, instead of distributing it
-	// ahhh, we need to crawl for all, not just isAssignment prop (e.g. rval needed for
 
-
-	// Insert "c.send(a)" after original transition
+	// Construct "c.send(a)" transition
 	arithmetic::Action sendAction;
 	arithmetic::Expression sendExpr = arithmetic::call(
 			"send",
-			{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(varAssigned)}
+			{arithmetic::Expression::varOf(channelIdx), rexpr}
 			);
 	sendAction.lvalue = arithmetic::Expression::undef();
 	sendAction.rvalue = sendExpr;
@@ -1959,11 +2028,7 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 	clog << "++ " << channelIdx << endl
 		<< "+> " << sendExpr << endl;
 
-	petri::iterator transitionIt(petri::transition::type, transitionIdx);
-	petri::iterator sendTransitionIt = this->super::insert_after(transitionIt, sendTransition);
-
-
-	// Insert "b = c,recv()" in parallel with "c.send(a)" to each outgoing transition
+	// Construct "b = c.recv()"
 	arithmetic::Action recvAction;
 	arithmetic::Expression recvExpr = arithmetic::call(
 			"recv",
@@ -1975,20 +2040,211 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 			arithmetic::Expression::vdd(), arithmetic::Choice({{recvAction}}));
 	clog << "<+ " << recvExpr << endl;
 
-	petri::iterator from(petri::transition::type, transitionIt.index);
-	//TODO(steven.kneiser): shouldn't insert_alongside() eloquently handle all these already?
-	for (petri::iterator outPlace : this->next(sendTransitionIt)) {
-		for (petri::iterator to : this->next(outPlace)) {
-			petri::iterator recvTransitionIt = this->super::insert_alongside(from, to, recvTransition);
-		}
+	// Replace this transition with new children
+	petri::iterator transitionIt(petri::transition::type, transitionIdx);
+
+	//TODO(steven.kneiser): do we need to preserve guard too? guard both new expressions?
+	//      ...for simplicity we could introduce a "g -> skip" beforehand, instead of distributing it
+	// ahhh, we need to crawl for all, not just isAssignment prop (e.g. rval needed for
+
+	// Construct "g -> skip" if guard, g, exists
+	petri::iterator sendTransitionIt;
+	if (not areSame(transition.guard, arithmetic::Expression::vdd())) {	 //TODO(steven.kneiser): what's the most idiomatic "if guard isn't empty"?
+		chp::transition guardTransition(transition.guard);
+		petri::iterator guardTransitionIt = this->super::insert_after(transitionIt, guardTransition);
+		//TODO(steven.kneiser): What about all the inTransitions+Places to transitionIt? Verify that pinch works precisely
+		sendTransitionIt = this->super::insert_after(guardTransitionIt, sendTransition);
+
+	} else {
+		//TODO(steven.kneiser): What about all the inTransitions+Places to transitionIt? Verify that pinch works precisely
+		sendTransitionIt = this->super::insert_after(transitionIt, sendTransition);
 	}
 
-	// Remove original assignment's transition
-	//this->pinch(transitionIt);
-	//TODO(steven.kneiser): oops, we can't yeet yet ....not til we push rval into sender
+	////TODO(steven.kneiser): shouldn't insert_alongside() eloquently handle all these already?
+	//for (petri::iterator outPlace : this->next(sendTransitionIt)) {
+	//	for (petri::iterator to : this->next(outPlace)) {
+	//		petri::iterator recvTransitionIt = this->super::insert_alongside(transitionIt, to, recvTransition);
+	//	}
+	//}
+
+	petri::iterator dummyTailIt = this->super::insert_after(sendTransitionIt, chp::transition());
+	petri::iterator recvTransitionIt = this->super::insert_alongside(transitionIt, dummyTailIt, recvTransition);
+	//TODO: this->pinch(dummyTailIt);
+
+	
+	//TODO(steven.kneiser): Finally, update the relevant useDef's to preserve their correctness!
+	//  We can update this properly with new info or at least leave UseDef's like a todolist for replacement
+	//    ...let's start by just pruning
+	//this->getVarDefTransition();
+	vector<VarIdx> sendVars = getVarsFromExpression(sendExpr);
+	for (VarIdx sendVar : sendVars) {
+
+		// Substitute new sendTransition for previous assignment
+		//TODO(steven.kneiser): perf optimization: modify useDefChain in-place
+		vector<VarIdx> &varUses = this->useDefChains[sendVar].uses;
+		auto it = std::find(varUses.begin(), varUses.end(), transitionIt.index);
+		if (it != varUses.end()) { varUses.erase(it); }
+		varUses.push_back(sendTransitionIt.index);
+		this->useDefChains[sendVar].uses = varUses;
+	}
+
+	this->pinch(transitionIt);  // Remove the original assignment
+
+	clog << "rewrote assignment as channel." << endl;
 }
 
 
+// Scrape Transition for either var defined or channel being sent/output on
+//TODO(steven.kneiser): find more readable, future-proof name than "USING var" ...as in the Def var in a use-def chain (because it needs to abstract the union of these two types
+bool graph::isTargetVarOfTransition(VarIdx targetVar, TransitionIdx transitionIdx) {
+	if (not this->transitions.is_valid(transitionIdx)) { return false; }
+	const chp::transition &transition = this->transitions[transitionIdx];
+	const arithmetic::Choice &choice = transition.action;
+
+	// Does this transition define <user> var or send on <user> channel?
+	const arithmetic::Expression targetVarAsExpr = Expression::varOf(targetVar);
+	for (const arithmetic::Parallel &term : choice.terms) {
+		for (const arithmetic::Action &action : term.actions) {
+			if (areSame(action.lvalue, targetVarAsExpr)) { return true; }  //TODO(steven.kneiser): perf optimization: is there a quicker, more precise predicate?
+
+			vector<VarIdx> outputChannels = findOutputChannelsInExpression(action.rvalue);
+			if (std::find(outputChannels.begin(), outputChannels.end(), targetVar) != outputChannels.end()) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+
+//TODO(steven.kneiser): Why not just pass VarIdx ...since you're going to index into useDefs anyways ...no need to pass set?
+//TODO(steven.kneiser): Done, now re-introduce usageRename remappings for DSA indexing
+void graph::rewriteAssignmentAsCopyProcess(TransitionIdx transitionIdx, const set<VarIdx> &uses) {
+	clog << "rewriting assignment as Copy Process." << endl;
+
+	if (not this->transitions.is_valid(transitionIdx)) { return; }
+	const chp::transition &transition = this->transitions[transitionIdx];
+
+	// Extract terms of assignment
+	//TODO(steven.kneiser): this is a perfect case-study for future chp::transition helpers!
+	VarIdx varAssigned;
+	bool isAssignment = false;
+	//TODO(steven.kneiser): isAssignment() expression helper in chp::transition? ...it could return the VarIdx of the varAssigned! Return an optional?
+	Expression lexpr, rexpr;
+	const arithmetic::Choice &choice = transition.action;
+	for (const arithmetic::Parallel &term : choice.terms) {
+		for (const arithmetic::Action &action : term.actions) {
+			if (not action.lvalue.isUndef()) {
+				isAssignment = true;
+				varAssigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+
+				lexpr = action.lvalue;
+				rexpr = action.rvalue;
+				////vector<VarIdx> leftVars = getVarsFromExpression(action.lvalue);
+
+				////TODO: is_definition parameter could be more robust ":=" assignment operand matching
+				////vector<VarIdx> rightVars = getVarsFromExpression(action.rvalue);
+				////vector<VarIdx> inputChannelsUsed = findInputChannelsInExpression(action.rvalue);
+				////vector<VarIdx> outputChannelsUsed = findOutputChannelsInExpression(action.rvalue);  //TODO: are you confident in the ordering out of this algorithm?
+			}
+			break;  //TODO(steven.kneiser): why was this here, even in the `getPreviousDefinitions()` above that I pasted it from? ...probably an old simplifying assumption that it'll be 1 transition
+		}
+	}
+	if (not isAssignment) { return; }
+
+	if (not this->useDefChains.contains(varAssigned)) { return; } //continue;  //TODO(steven.kneiser): should never happen if this is detected as multi-use vairable,
+	//   ...unless the generation of other CopyProcesses collide here (possible on recursive rewrites?) This doesn't seem to fail gracefully, just silently
+	useDefChain &varAssignedUseDefChain = this->useDefChains[varAssigned];
+	//TODO(steven.kneiser): update useDefChain by writing this back at the end of this func (or does this reference hold?)
+
+
+	// Create forking assignments of branches
+	//TODO(steven.kneiser): Clean up the awkward "--0" tail workaround (tempting because getEnumeratedVar helper always trails int, which can awkwardly mix with DSA-enumerated vars from userName)
+	VarIdx varForkIdx = this->getEnumeratedVar(varAssigned, 0, "~fork--");
+	arithmetic::Action forkAssignment(Expression::varOf(varForkIdx), rexpr);
+	//TODO(steven.kneiser): don't forget to include guard, g, if there is one! (repeat the impl in rewriteAssignmentAsChannel() )
+	chp::transition forkTransition(Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
+	petri::iterator transitionIt(petri::transition::type, transitionIdx);
+	petri::iterator forkIt = this->super::insert_after(transitionIt, forkTransition);
+	petri::iterator dummyHeadIt = this->super::insert_after(forkIt, chp::transition());
+	petri::iterator dummyTailIt = this->super::insert_after(dummyHeadIt, chp::transition());
+
+
+	vector<petri::iterator> branchIts;
+	for (VarIdx use : uses) {  //TODO(steven.kneiser): better named as "user : users"?
+		if (use >= this->vars.size()) { continue; }
+		string userName = this->vars[use].name;
+
+		//TODO(steven.kneiser): Clean up the awkward "--0" tail workaround (tempting because getEnumeratedVar helper always trails int, which can awkwardly mix with DSA-enumerated vars from userName)
+		VarIdx varBranchIdx = this->getEnumeratedVar(varAssigned, 0, "~branch~" + userName + "--");
+		arithmetic::Action branchAssignment(Expression::varOf(varBranchIdx), Expression::varOf(varForkIdx));
+		chp::transition branchTransition(Expression::vdd(), arithmetic::Choice({{branchAssignment}}));
+
+		petri::iterator branchIt = this->super::insert_alongside(forkIt, dummyTailIt, branchTransition);
+		branchIts.push_back(branchIt);
+
+
+		// Find this user's transitionIdx (could be better merged with "uses" parameter of this function?)
+		for (TransitionIdx usingTransitionIdx : varAssignedUseDefChain.uses) {
+			if (not this->transitions.is_valid(usingTransitionIdx)) { continue; }  // redundant for future-proof safety
+			if (not this->isTargetVarOfTransition(use, usingTransitionIdx)) { continue; }
+
+			//TODO(steven.kneiser): wait, wait if this skips (e.g. pythonic `for-else` or `nobreak` clause) and we never find anything ...but proceed to remapVar anyway? what should be the default case?
+
+
+			this->remapVarInTransition(varAssigned, varBranchIdx, usingTransitionIdx);
+
+			//TODO(steven.kneiser): Finally, update the relevant useDef's to preserve their correctness!
+			//  We can update this properly with new info or at least leave UseDef's like a todolist for replacement
+
+			// Substitute new sendTransition for previous "using" Transition, assigning to this user or sending on this user's channel
+			//TODO(steven.kneiser): perf optimization: modify useDefChain in-place
+			if (this->useDefChains.contains(varAssigned)) {
+				vector<VarIdx> &varUses = this->useDefChains[varAssigned].uses;
+				//NOTE(steven.kneiser): VERY dangerous to mutate an object we're iterating over,
+				//   ...but this is okay because we're breaking the iteration after this match
+
+				auto it = std::find(varUses.begin(), varUses.end(), usingTransitionIdx);
+				if (it != varUses.end()) { varUses.erase(it); }
+				////varUses.push_back(branchIt.index);  //TODO(steven.kneiser): ummmmm this only makes sense on channel REWRITE, not here where we're merely replacing this with a branch
+				////   ...the TRANSITION isn't new like a channel-rewrite, there's a new def but we have to do a channel rewrite here to justify
+				////   (e.g. the ideal would be `b_1~branch~<user>` needs to point to this new branch iter as the the def iter)
+
+				//TODO(steven.kneiser): oh crap, now that we predefine this list WE'RE MODIFYING IT WHILE ITERATING OVER IT! see varAssignedUseDefChain ....ugh
+				// IDEA: okay, let's batch all these "toOverwrite" updates to useDefs for after the branches are made ...perhaps even after the fork is done?
+				// ahh, this can be safe if we gaurantee we break upon any mutation?
+				//TODO(steven.kneiser): RETVRN HERE
+				//  ... aha, the right answer is to transform this from a range-based for-loop to an iterator-based one, and pass that iterator to erase
+
+				////this->useDefChains[varAssigned].uses = varUses;   // unneeded since we modified reference
+			}
+
+			break;  // if isTargetVarOfTransition(), then we've found what we've already processed our match
+
+			//TODO(steven.kneiser): oof yikes, I'm preserving the useDefChain of varAssigned, "b_1", here
+			//   ...instead of substituting for varForkIdx, "b_1~branch~<user>--0", which it now SHOULD be (specifically in the INDEX of the useDefChains)
+
+			//TODO(steven.kneiser): should useDefChains really be a .uses -> map[varIdx-of-user] -> transitionIdx-of-usage? or vice versa? Should be a Mapping<size_t> (more precisely, VarIdx <-> TransitionIdx>)
+		}
+
+
+		VarIdx branchChannelIdx = this->getEnumeratedVar(varAssigned, 0, "~BRANCH_CHAN~" + userName + "--");  //TODO(steven.kneiser): get full proper name
+		this->rewriteAssignmentAsChannel(branchIt.index, branchChannelIdx);
+	}
+
+
+
+
+	// Rewrite assignments as channels, isolating this Copy Process for Projection in Process Decomposition
+	//TODO(steven.kneiser): Like everywhere else, clean up the awkward "--0" tail workaround (tempting because getEnumeratedVar helper always trails int, which can awkwardly mix with DSA-enumerated vars from userName)
+	VarIdx forkChannelIdx = this->getEnumeratedVar(varAssigned, 0, "~FORK_CHAN--");
+	this->rewriteAssignmentAsChannel(forkIt.index, forkChannelIdx);
+
+
+	this->pinch(transitionIt);  // Remove the original assignment
+
+	clog << "rewrote assignment as Copy Process." << endl;
+}
 
 
 //TODO: find what's shared between these two helpers (direct vs copy) & can be wrapped (e.g. assignment->petri? rewriteAssignmentAsChannel() ???)
@@ -2006,54 +2262,28 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		if (useCount != 1) { continue; }
 		VarIdx user = *users.begin();
 
-		// Insert "CHAN.send(x); x_usage_n = CHAN.recv()" after definition
 		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
-		if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd input-channel
+		if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd/used input-channel
 
-		TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
-		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "_LONE_CHAN");
-
-
-		//TODO: rename usages THEN THEN THEN subsitute channel, no longer at the same time
-		//      ...for legibility (I'll also likely tease out some subtle bugs in this disambiguation)
+		// Substitute "x_usage_n" for x in usage
+		VarIdx varUsageIdx = this->getEnumeratedVar(dependency, 0, "~lone--");
+		this->remapVarInEachTransition(dependency, varUsageIdx);  //false, true
+		//TODO(steven.kneiser): there exists a powerful parallel here to the need to retrieve the transition FROM the var's target/def-er/user that we do for Copy Processes
+		// Ideally, we should just be doing a singular surgical remapping in "this" one transition, not sloppily innefficiently search ALL transitions
 
 		// Rewrite "x = ..." as "CHAN.send(x)" & "x_usage_n = CHAN.recv()" in parallel
+		TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
+		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
+		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "~LONE_CHAN--");
 		this->rewriteAssignmentAsChannel(defTransitionIt.index, channelIdx);
 
 		projectionSets[dependency].insert(ProjectionItem(channelIdx, true, true));
 		projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
 		//TODO(steven.kneiser): verify nothing needs to be REMOVED from Projection Sets after rewrite
-
-		// Substitute "x_usage_n" for x in usage
-		VarIdx varUsageIdx = this->getEnumeratedVar(dependency, 0, "_lone");
-		Mapping<VarIdx> usageRename(std::numeric_limits<VarIdx>::max(), true);
-		usageRename.set(dependency, varUsageIdx);
-
-		set<ProjectionItem> &p = projectionSets[user];
-		p.erase(ProjectionItem(dependency));
-		p.insert(ProjectionItem(varUsageIdx));
-
-		if (dependencyUseDefChain.uses.empty()) { continue; }
-		for (TransitionIdx use : dependencyUseDefChain.uses) {  //TODO: shouldn't this always be .size()==1? It's a lone var? Maybe used in guard of a non-assignment!
-			chp::transition &usageTransition = this->transitions[use];
-			usageTransition.guard.applyVars(usageRename);
-
-			arithmetic::Choice &choice = usageTransition.action;
-			for (arithmetic::Parallel &term : choice.terms) {
-				for (arithmetic::Action &action : term.actions) {
-					action.rvalue.applyVars(usageRename);
-					//TODO: what if there are multiple uses of the same variable within this assignment? seems less an issue the more I consider it
-				}
-			}
-		}
 	}
 
 	clog << "rewrote each single-use var as a direct channel." << endl;
 }
-
-
-void graph::rewriteAssignmentAsCopyProcess(TransitionIdx transitionIdx, VarIdx channelIdx, size_t copyCount) {}
 
 
 void graph::rewriteEachMultiUseVarAsCopyProcess(
@@ -2068,10 +2298,9 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 			<< this->vars[dependency].name << ": " << useCount
 			<< ((useCount > 1) ? "!" : "") << endl;
 
-
 		//// Insert new "x_fork := x;" copy-assignment immediately after x assignment
 		//// This serves as the base of a fork, splitting/parallelizing out to every use/reference
-		VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "_fork");
+		VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "~fork--");
 		projectionSets[varForkIdx].insert(ProjectionItem(varForkIdx));
 
 		////TODO: is this much recalculation needed to retrace definition?
@@ -2083,133 +2312,18 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 		//TODO: append useDef after inserting new assignment?  nah, because
 		//   because decomp/synthesis is a destructive operation (if rerun, we would recalculate the CFG & use-defs anyways
 
-
 		// Insert "this.guard -> CHAN.send(x); x_fork := CHAN.recv()"
-		VarIdx forkChannelIdx = this->getEnumeratedVar(dependency, 0, "_FORK_CHAN");
-		//projectionSets[dependency].insert(varForkIdx); //TODO: be careful of renamed x vs x_fork which I'm still ambiguous what I prefer, but I've already remapped everywhere to x_fork wherever appropriate
+		VarIdx forkChannelIdx = this->getEnumeratedVar(dependency, 0, "~FORK_CHAN--");
 		clog << "++ " << forkChannelIdx << endl;
-
-		//TODO(steven.kneiser): RETVRN HERE opportunity to abstract out "create copy process"
-		// for use with deduping guard-split copyprocs vs multi-use copyprocs (or perhaps those should be handled as one merged batch before we do those two?
-
 		projectionSets[dependency].insert(ProjectionItem(forkChannelIdx, true, true));
 		projectionSets[varForkIdx].insert(ProjectionItem(forkChannelIdx, true, false));
 
-		//this->rewriteAssignmentAsChannel(defTransitionIdx, forkChannelIdx);
 
-		// Insert "this.guard -> CHAN.send(x)"
-		Expression channelSendExpr = arithmetic::call(
-				"send",
-				{Expression::varOf(forkChannelIdx), Expression::varOf(dependency)} //nope, varForkIdx//TODO: nope, now... dependency//varForkIdx
-				);
-		clog << "+> " << channelSendExpr << endl;
-		arithmetic::Action forkSend(Expression::undef(), channelSendExpr);
-		Expression guard = this->transitions[defTransitionIdx].guard;
-		chp::transition forkSendTransition(guard, arithmetic::Choice({{forkSend}}));
-
-		petri::iterator forkSendTransitionIt = this->super::insert_after(defTransitionIt, forkSendTransition);
-
-
-		// Insert "x_fork := CHAN.recv()"
-		//TODO: make all other arithmetic::Action constructors more legible like this? ... ugh, now too dense, but still somewhat better (ah, use namespaces)
-		Expression channelRecvExpr = arithmetic::call("recv", {Expression::varOf(forkChannelIdx)});
-		clog << "<+ " << channelRecvExpr << endl;
-		arithmetic::Action forkRecv(Expression::varOf(varForkIdx), channelRecvExpr);
-		chp::transition forkRecvTransition(Expression::vdd(), arithmetic::Choice({{forkRecv}}));
-
-		petri::iterator umbilicalCordIt = this->super::insert_after(forkSendTransitionIt, chp::transition());
-		//TODO(steven.kneiser): pinch this cord? new post-umbilical approach?
-		petri::iterator forkRecvTransitionIt = this->super::insert_after(umbilicalCordIt, forkRecvTransition);
-
-
-		//TODO: SLOPPY HACK to get next transition as hook for spawning parallel branchs with the same source & target
-		//TODO: not even bound-checked. absolutely disgusting.
-		petri::iterator originalUmbilicalCordIt = this->next(forkRecvTransitionIt)[0];
-		petri::iterator branchTargetTransitionIt = this->next(originalUmbilicalCordIt)[0];
-		//TODO: yikes, this structural decision probably isn't needed. I imagine a recv with multiple parallel outs doesn't fit into this fork. I only considered the next transition, back to the documented approach.
-
-
-		// Insert "CHAN.send(x_fork); x_usage_n = CHAN.recv()" internal-communication channels in-place of assignment
-		size_t copyCount = 0;
-		for (VarIdx user : users) {
-			VarIdx channelIdx = this->getEnumeratedVar(dependency, copyCount, "_BRANCH_CHAN");
-			//clog << "^%$ " << this->vars[varCopyIdx].name << endl;
-
-
-			// Insert "CHAN.send(x_fork)"
-			arithmetic::Action usageSend;
-			arithmetic::Expression channelSendExpr = arithmetic::call(
-					"send",
-					{arithmetic::Expression::varOf(channelIdx), arithmetic::Expression::varOf(varForkIdx)}
-					);
-			usageSend.lvalue = arithmetic::Expression::undef();
-			usageSend.rvalue = channelSendExpr;
-			chp::transition branchSendTransition(
-					arithmetic::Expression::vdd(), arithmetic::Choice({{usageSend}}));
-			//TODO: certainly not, but quadruple-check that there isn't a guard worth preserving here. Definitely not, but I'm sleepy & prefer over-documenting assumptions
-
-
-			// Create a new branch off the fork
-			size_t branchHeadIdx = this->places.emplace(chp::place());
-			petri::iterator branchHeadIt(petri::place::type, branchHeadIdx);
-			this->super::connect(forkRecvTransitionIt, branchHeadIt);
-
-			clog << "++ " << channelIdx << endl
-				<< "+> " << channelSendExpr << endl;
-			petri::iterator branchSendTransitionIt = this->super::insert_after(branchHeadIt, branchSendTransition);
-			projectionSets[varForkIdx].insert(ProjectionItem(channelIdx, true, true));
-
-
-			// Insert "x_usage_n = CHAN.recv()"
-			arithmetic::Action usageRecv;
-			arithmetic::Expression channelRecvExpr = arithmetic::call(
-					"recv",
-					{arithmetic::Expression::varOf(channelIdx)}
-					);
-			VarIdx varUsageIdx = this->getEnumeratedVar(dependency, copyCount, "_branch");
-			usageRecv.lvalue = arithmetic::Expression::varOf(varUsageIdx);
-			usageRecv.rvalue = channelRecvExpr;
-			chp::transition branchRecvTransition(
-					arithmetic::Expression::vdd(), arithmetic::Choice({{usageRecv}}));
-			clog << "<+ " << channelRecvExpr << endl;
-
-			petri::iterator branchRecvTransitionIt = this->super::insert_after(branchSendTransitionIt, branchRecvTransition);
-			petri::iterator branchTailIt = this->next(branchRecvTransitionIt)[0];
-			this->super::connect(branchTailIt, branchTargetTransitionIt);
-			projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
-
-
-			// Substitute "x_cp_n" for x usages
-			Mapping<VarIdx> usageRename(std::numeric_limits<VarIdx>::max(), true);
-			usageRename.set(dependency, varUsageIdx);
-			//TODO: or is it fork-instead-of-dependency that needs to be replaced? triple-check
-			for (VarIdx user : users) {
-				set<ProjectionItem> &p = projectionSets[user];
-				p.erase(ProjectionItem(dependency));
-				p.insert(ProjectionItem(varUsageIdx));
-			}
-
-			////useDefChain &userUseDefChain = this->useDefChains[user];
-			////if (userUseDefChain.defs.empty()) { continue; }  //TODO: necessary? Is this the right way or can I just use uses[-]
-			//TransitionIdx usageTransitionIdx = this->useDefChains[user].defs[0];
-			if (dependencyUseDefChain.uses.empty()) { continue; }
-			TransitionIdx use = dependencyUseDefChain.uses[copyCount];  //TODO: sloppy, is this the same branch ordering? I suspect not. This feels like it should do a lookup on the invertedDependency user's definition
-																																	//for (TransitionIdx use : dependencyUseDefChain.uses)
-			chp::transition &usageTransition = this->transitions[use]; //usageTransitionIdx
-			usageTransition.guard.applyVars(usageRename);
-
-			arithmetic::Choice &choice = usageTransition.action;
-			for (arithmetic::Parallel &term : choice.terms) {
-				for (arithmetic::Action &action : term.actions) {
-					action.rvalue.applyVars(usageRename);
-					//TODO: what if there are multiple uses of the same variable within this assignment?
-				}
-			}
-
-			copyCount++;
-		}
-
-		this->super::erase(originalUmbilicalCordIt);
+		//TODO(steven.kneiser): restudy the bound of this function ...should this projectionSets update be done internally? or perhaps more logic should be pulled out?
+		//   i.e. does this funciton do too much? too little?
+		// at least the users should be shifted to either a single var or the entire useDef, or get re-retrieved internally for better decoupling?
+		//  ...I don't like how small/hollowed out this outer func has become ...perhaps it should be left as a well-commented section of IT's parent: rewriteAssignmentsAsChannels()
+		this->rewriteAssignmentAsCopyProcess(defTransitionIdx, users);  //forkChannelIdx);
 	}
 
 	clog << "rewrote each multi-use var as a Copy Process." << endl;
@@ -2337,8 +2451,8 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 		const chp::transition &transition = this->transitions[transitionIdx];
 		vector<VarIdx> guardVars = getVarsFromExpression(transition.guard);
 
-		const arithmetic::Choice &action = transition.action;
-		for (const auto &term : action.terms) {
+		const arithmetic::Choice &choice = transition.action;
+		for (const auto &term : choice.terms) {
 			for (const auto &action : term.actions) {
 				vector<VarIdx> leftVars = getVarsFromExpression(action.lvalue);
 
@@ -2436,10 +2550,8 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 
 	//
 	// 3) Insert copy variables & internal-communication channels
-	//      ...in order to build Projection Sets
 	//
 	this->rewriteAssignmentsAsChannels(invertedDependencySets, projectionSets);
-
 
 	clog << endl << "  # ## ### < PS> ### ## #  " << endl;
 	auto toString = [this](const ProjectionItem &p) -> string {

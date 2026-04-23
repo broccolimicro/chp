@@ -174,6 +174,8 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	bool controlFlowGraphReady = false;
 	bool useDefChainsReady = false;
+	//TODO(steven.kneiser): introduce this, but when precisely should it become stale/invalidated?
+	//bool projectionSetsReady = false;
 
 	int netIndex(string name, bool define=false);
 	int netIndex(string name) const;
@@ -242,30 +244,37 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	unordered_map<VarIdx, useDefChain> useDefChains;
 	void setUseDef(VarIdx var_idx, TransitionIdx transition_idx, bool is_definition=false);
+	//TODO(steven.kneiser): even if they update multiple useDefChains, ideally this would return a more transparent vec/set of new useDefChainss without modifying this->useDefChains in-place. Sometimes I just want to read.
 	void extractUseDefFromExpression(TransitionIdx transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
 	void extractUseDefFromTransition(TransitionIdx transition_idx);
 	void computeUseDefChains();
+	bool isTargetVarOfTransition(VarIdx varIdx, TransitionIdx transitionIdx);
 
 	//TODO(steven.kneiser): better name for higher-order transformation? substitution? variable renaming? lifetime / live range splitting?
 	//  hmm, it includes renaming defintion AND references, but it's more semantic than just a complete rename
-	void renameVarAtTransition(VarIdx varIdx, TransitionIdx transitionIdx);
+	void remapVarInTransition(VarIdx from, VarIdx to, TransitionIdx transitionIdx, bool remapGuard=true, bool remapLHS=true, bool remapRHS=true);
+	void remapVarInEachTransition(VarIdx from, VarIdx to, bool rewriteDefinitions=true, bool rewriteUses=true);
 
 	//TODO(steven.kneiser): ideal API: just pass DSA'd VarIdx & let these helpers search & identify the defining definition
 	void rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx channelIdx);
-	void rewriteAssignmentAsCopyProcess(TransitionIdx transitionIdx, VarIdx channelIdx, size_t copyCount);
+	void rewriteAssignmentAsCopyProcess(TransitionIdx transitionIdx, const set<VarIdx> &uses);
+
+	void rewriteEachSingleUseVarAsDirectChannel(
+			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
+
+	void rewriteEachMultiUseVarAsCopyProcess(
+			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
+
+	void rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
+			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
+			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
 
 	void rewriteAssignmentsAsChannels(
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
-	void rewriteEachSingleUseVarAsDirectChannel(
-			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
-			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
-	void rewriteEachMultiUseVarAsCopyProcess(
-			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
-			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
-	void rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
-			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
-			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
+
 	unordered_map<VarIdx, set<ProjectionItem>> computeProjectionSets();
 	vector<graph> project();
 	vector<graph> decompose();
