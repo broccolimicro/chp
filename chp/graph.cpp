@@ -515,12 +515,12 @@ void graph::renderReset() {
 	chp::state newResetState;
 	petri::iterator newHeadIt;
 	for (const chp::state &resetState : this->reset) {  //TODO: properly support multiple reset states
-		size_t varIdx = 0;
+		VarIdx varIdx = 0;
 		for (const arithmetic::Value &varReset : resetState.encodings.values) {
 			if (varReset.state != arithmetic::Value::StateType::VALID) { continue; }
 
 			string varName = this->vars[varIdx].name;
-			size_t initValue = varReset.ival;
+			VarValue initValue = varReset.ival;
 			cout << "reset> " << varName << " := " << std::to_string(initValue) << endl;
 
 			arithmetic::Action varInit(
@@ -1300,57 +1300,57 @@ void graph::computeControlFlowGraph() {
 	this->controlFlowGraphReady = true;
 }
 
-void graph::setUseDef(VarIdx chp_var_idx, TransitionIdx transition_idx, bool is_definition) {
-	string chp_var_name = this->netAt(chp_var_idx);
+void graph::setUseDef(VarIdx varIdx, TransitionIdx transitionIdx, bool isDefinition) {
+	string varName = this->netAt(varIdx);
 
 	// New variable? Record its name
-	if (this->useDefChains.find(chp_var_idx) == this->useDefChains.end()) {
-		this->useDefChains[chp_var_idx].name = chp_var_name;
-		//this->useDefChains[chp_var_idx].index = chp_var_idx;
+	if (this->useDefChains.find(varIdx) == this->useDefChains.end()) {
+		this->useDefChains[varIdx].name = varName;
+		this->useDefChains[varIdx].varIdx = varIdx;
 	}
 
-	if (is_definition) {
-		this->useDefChains[chp_var_idx].defs.push_back(transition_idx);
-		//this->defs[chp_var_name].push_back(transition_idx);
-		clog << "DEF " << chp_var_name << " @ " << transition_idx << endl;
+	if (isDefinition) {
+		this->useDefChains[varIdx].defs.push_back(transitionIdx);
+		//this->defs[varName].push_back(transitionIdx);
+		clog << "DEF " << varName << " @ " << transitionIdx << endl;
 
 	} else {
-		this->useDefChains[chp_var_idx].uses.push_back(transition_idx);
-		//this->uses[chp_var_name].push_back(transition_idx);
-		clog << "use " << chp_var_name << " @ " << transition_idx << endl;
+		this->useDefChains[varIdx].uses.push_back(transitionIdx);
+		//this->uses[varName].push_back(transitionIdx);
+		clog << "use " << varName << " @ " << transitionIdx << endl;
 	}
 }
 
-void graph::extractUseDefFromExpression(TransitionIdx transition_idx, const arithmetic::Expression &e, bool is_definition) {
-	if (is_definition && e.top.isVar() && e.size() == 0) {
-		this->setUseDef(e.top.index, transition_idx, true);
+void graph::extractUseDefFromExpression(TransitionIdx transitionIdx, const arithmetic::Expression &e, bool isDefinition) {
+	if (isDefinition && e.top.isVar() && e.size() == 0) {
+		this->setUseDef(e.top.index, transitionIdx, true);
 
 	} else if (not e.isUndef()) { //if (e.isExpr()) {}
-		for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+		for (const arithmetic::Operand &subExpr : e.exprIndex()) {
 
 			// Iterate across all sub-expression leaves
 			//TODO: introduce some simpler "walkLeaves"-esque helper method into Expression?
-			const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+			const arithmetic::Operation &operation = *e.getExpr(subExpr.index);
 			for (const arithmetic::Operand &operand : operation.operands) {
 				if (operand.type == arithmetic::Operand::Type::VAR) {
-					this->setUseDef(operand.index, transition_idx, is_definition);
+					this->setUseDef(operand.index, transitionIdx, isDefinition);
 				}
 			}
 		}
 	} // else if (not e.isUndef()) {}
 }
 
-void graph::extractUseDefFromTransition(TransitionIdx transition_idx) {
-	const chp::transition &tran = this->transitions[transition_idx];
-	extractUseDefFromExpression(transition_idx, tran.guard);
+void graph::extractUseDefFromTransition(TransitionIdx transitionIdx) {
+	const chp::transition &transition = this->transitions[transitionIdx];
+	extractUseDefFromExpression(transitionIdx, transition.guard);
 
-	const arithmetic::Choice &action = tran.action;
-	for (const auto &term : action.terms) {
+	const arithmetic::Choice &choice = transition.action;
+	for (const auto &term : choice.terms) {
 		for (const auto &action : term.actions) {
-			extractUseDefFromExpression(transition_idx, action.lvalue, true);
+			extractUseDefFromExpression(transitionIdx, action.lvalue, true);
 
-			//TODO: is_definition parameter could be more robust ":=" assignment operand matching
-			extractUseDefFromExpression(transition_idx, action.rvalue);
+			//TODO: isDefinition parameter could be more robust ":=" assignment operand matching
+			extractUseDefFromExpression(transitionIdx, action.rvalue);
 		}
 	}
 }
@@ -1369,66 +1369,67 @@ void graph::computeUseDefChains() {
 	cout << "useDef chains computed." << endl;
 }
 
-pair<int, vector<TransitionIdx>> graph::getPreviousDefinitions(petri::iterator transition_it, const vector<petri::iterator> &prev_transitions) {
-	//TODO: rename prev_transitions param, now that I include current def
+//TODO(steven.kneiser): int -> VarIdx w/ numeric_limits<size_t>::max for flag
+pair<int, vector<TransitionIdx>> graph::getPreviousDefinitions(petri::iterator transitionIt, const vector<petri::iterator> &prevTransitionIts) {
+	//TODO: rename prevTransitionIts param, now that I include current def
 	//TODO: return all redefinitions of the same var so it can be enumerated (the LAST one in this vector is the reaching def!)
 	//TODO: perf, cache this inside each transition, so there's a running set? Where should the analysis data be stored?
 
 	// If there's no assignment, skip
-	size_t var_assigned;
+	VarIdx varAssigned;
 
 	//TODO: isAssignment() expression helper in chp::transition?
-	bool is_assignment = false;
-	const chp::transition &transition = this->transitions[transition_it.index];
-	const arithmetic::Choice &action = transition.action;
-	for (const arithmetic::Parallel &term : action.terms) {
+	bool isAssignment = false;
+	const chp::transition &transition = this->transitions[transitionIt.index];
+	const arithmetic::Choice &choice = transition.action;
+	for (const arithmetic::Parallel &term : choice.terms) {
 		for (const arithmetic::Action &action : term.actions) {
 			if (not action.lvalue.isUndef()) {
-				is_assignment = true;
-				var_assigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+				isAssignment = true;
+				varAssigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
 			}
 			break;
 		}
 	}
 
-	if (not is_assignment) {
-		clog << "===> " << transition_it.index << ": N/A" << endl;
-		return pair<int, vector<size_t>>(-1, {});
+	if (not isAssignment) {
+		clog << "===> " << transitionIt.index << ": N/A" << endl;
+		return pair<int, vector<TransitionIdx>>(-1, {});
 	}
 
 	// Filter down previous transitions to only assignments
-	vector<size_t> prev_defs;
-	for (auto prev_transition_it = prev_transitions.begin(); prev_transition_it != prev_transitions.end() - 1; prev_transition_it++) {
-		const chp::transition &prev_transition = this->transitions[prev_transition_it->index];
+	vector<TransitionIdx> prevDefs;
+	for (auto prevTransitionIt = prevTransitionIts.begin(); prevTransitionIt != prevTransitionIts.end() - 1; prevTransitionIt++) {
+		const chp::transition &prevTransition = this->transitions[prevTransitionIt->index];
 
-		const arithmetic::Choice &prev_action = prev_transition.action;
-		for (const arithmetic::Parallel &term : prev_action.terms) {
+		const arithmetic::Choice &prevChoice = prevTransition.action;
+		for (const arithmetic::Parallel &term : prevChoice.terms) {
 			for (const arithmetic::Action &action : term.actions) {
 				if (action.lvalue.isUndef()) { continue; }
 
 				// Filter down previous assignments to only assignments of the same var
-				size_t prev_var_assigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
-				if (var_assigned == prev_var_assigned) {
-					prev_defs.push_back(prev_transition_it->index);
+				VarIdx prevVarAssigned = arithmetic::lvalueBase(action.lvalue, action.lvalue.top);
+				if (varAssigned == prevVarAssigned) {
+					prevDefs.push_back(prevTransitionIt->index);
 				}
 			}
 		}
 	}
 
 	// The last transition in the return vector just got redefined, so "kill" it in the containing block
-	clog << "===> " << transition_it.index << ": ";
-	std::copy(prev_defs.begin(), prev_defs.end(), ostream_iterator<size_t>(std::clog, ", "));
+	clog << "===> " << transitionIt.index << ": ";
+	std::copy(prevDefs.begin(), prevDefs.end(), ostream_iterator<TransitionIdx>(clog, ", "));
 	clog << endl;
-	return pair<int, vector<size_t>>(var_assigned, prev_defs);
+	return pair<int, vector<TransitionIdx>>(varAssigned, prevDefs);
 }
 
-void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t dsaCountAfter) {
+void graph::increaseBlockVarToDSAIndex(BlockIdx blockIdx, VarIdx varIdx, VarDSAIdx dsaCountAfter) {
 	//TODO: assumes this call & all params are a valid copy assignment. Safeguard if calling under new conditions
 
 	// Grab old DSA count from postDefs
 	chp::graph::controlFlowBlock &block = this->controlFlowGraph[blockIdx];
 	string varName = this->vars[varIdx].name;
-	size_t dsaCountBefore = block.postDefs[varIdx];
+	VarDSAIdx dsaCountBefore = block.postDefs[varIdx];
 
 	clog << " TODO: B[" << blockIdx << "] << " << varName << "_" << dsaCountAfter << " := " << varName << "_" << dsaCountBefore << endl;
 
@@ -1446,15 +1447,15 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 	// Insert new "v_new := v_old;" copy-assignment at the end of the block
 	// TODO: update postDefs here in this function or above? ...probably above, doubly-so?
 	arithmetic::Action newCopyAssignment;
-	size_t preVarIdx = this->getEnumeratedVar(varIdx, dsaCountBefore);
-	size_t postVarIdx = this->getEnumeratedVar(varIdx, dsaCountAfter);
+	VarIdx preVarIdx = this->getEnumeratedVar(varIdx, dsaCountBefore);
+	VarIdx postVarIdx = this->getEnumeratedVar(varIdx, dsaCountAfter);
 	newCopyAssignment.lvalue = arithmetic::Expression::varOf(postVarIdx);
 	newCopyAssignment.rvalue = arithmetic::Expression::varOf(preVarIdx);
 
 	//TODO: ugh, I should re-use petri/graph.h::insert_after
 	chp::transition newCopyAssignmentTransition(
 			arithmetic::Expression::vdd(), arithmetic::Choice({{newCopyAssignment}}));
-	size_t newTransitionIdx = this->transitions.insert(newCopyAssignmentTransition);
+	TransitionIdx newTransitionIdx = this->transitions.insert(newCopyAssignmentTransition);
 
 	// Insert copy-assignment after the block's last transition
 	this->super::erase_arc(outboundArc);
@@ -1470,22 +1471,21 @@ void graph::increaseBlockVarToDSAIndex(size_t blockIdx, size_t varIdx, size_t ds
 	block.postDefs[postVarIdx] = dsaCountAfter;
 }
 
-//TODO: update size_t's to more descriptive typedefs, including DSA counts!
-unordered_map<VarIdx, VarDSAIdx> graph::mergeDefinitionsBeforeBlock(size_t blockId) {
-	controlFlowBlock &block = this->controlFlowGraph[blockId];
-	unordered_map<size_t, size_t> liveDefinitions;
+unordered_map<VarIdx, VarDSAIdx> graph::mergeDefinitionsBeforeBlock(BlockIdx blockIdx) {
+	controlFlowBlock &block = this->controlFlowGraph[blockIdx];
+	unordered_map<VarIdx, TransitionIdx> liveDefinitions;
 
 	//unordered_map<size_t, unordered_map<size_t, size_t>> DSAIndexByVar;
 	//unordered_map<size_t, size_t> from_block_idx, dsa_index;
 	//unordered_map<size_t, size_t> var_idx, from_block_idx, dsa_index;
 	//unordered_map<pair<size_t, size_t>, size_t> dsaIndicesByBlock;  // [var_idx, from_block_idx] => var_count (a.k.a. DSA Index)
-	unordered_map<size_t, unordered_map<size_t, size_t>> dsaIndexPerBlockPerVar;  // var_idx -> [ from_block_idx -> var_count (a.k.a. DSA Index) ]
+	unordered_map<VarIdx, unordered_map<BlockIdx, VarDSAIdx>> dsaIndexPerBlockPerVar;  // var_idx -> [ from_block_idx -> var_count (a.k.a. DSA Index) ]
 
 	// For each variable, aggregate DSA indices by input block source
-	for (size_t inBlockIdx : block.ins) {
+	for (BlockIdx inBlockIdx : block.ins) {
 		const controlFlowBlock &in_block = this->controlFlowGraph[inBlockIdx];
 
-		for (pair<size_t, size_t> inDef : in_block.postDefs) {
+		for (pair<VarIdx, VarDSAIdx> inDef : in_block.postDefs) {
 			dsaIndexPerBlockPerVar[inDef.first][inBlockIdx] = inDef.second;
 		}
 	}
@@ -1496,8 +1496,8 @@ unordered_map<VarIdx, VarDSAIdx> graph::mergeDefinitionsBeforeBlock(size_t block
 		//dsaIndexPerBlock[]
 		// Start block with highest DSA index, in case of mismatch
 		auto maxIt = std::max_element(dsaIndexPerBlock.begin(), dsaIndexPerBlock.end());
-		size_t deepestBlock = maxIt->first;
-		size_t maxIndex = maxIt->second;
+		BlockIdx deepestBlock = maxIt->first;
+		TransitionIdx maxIndex = maxIt->second;
 		liveDefinitions[varIdx] = maxIndex;
 
 		string varName = this->vars[varIdx].name;
@@ -1520,7 +1520,7 @@ unordered_map<VarIdx, VarDSAIdx> graph::mergeDefinitionsBeforeBlock(size_t block
 VarIdx graph::getEnumeratedVar(VarIdx varIdx, VarDSAIdx num, string delimiter) {
 	string enumeratedName = this->vars[varIdx].name + delimiter + std::to_string(num);
 
-	int enumeratedVarIdx = this->netIndex(enumeratedName);
+	int enumeratedVarIdx = this->netIndex(enumeratedName);  //TODO(steven.kneiser): is implicit int -> size_t(VarIdx)  safe?
 	if (enumeratedVarIdx == -1) {
 		enumeratedVarIdx = this->vars.size();
 
@@ -1538,8 +1538,8 @@ void graph::convertToDSA() {
 
 	// Populate pre- & post- reaching definitions
 	// Use [forward] iterative "Worklist" algorithm for data flow (remarkably stable, block-order-invariant)
-	queue<size_t> worklist;
-	set<size_t> inWorklist;
+	queue<BlockIdx> worklist;
+	set<BlockIdx> inWorklist;
 
 	//TODO: empty should just be an early-out?
 	if (not this->controlFlowGraph.empty()) {
@@ -1552,7 +1552,7 @@ void graph::convertToDSA() {
 		workCount++;
 
 		clog << endl << ">> queue: ";
-		queue<size_t> worklistSnapshot(worklist);
+		queue<BlockIdx> worklistSnapshot(worklist);
 		while (not worklistSnapshot.empty()) {
 			clog << worklistSnapshot.front() << " ";
 			worklistSnapshot.pop();
@@ -1565,17 +1565,17 @@ void graph::convertToDSA() {
 			break;
 		}
 
-		size_t blockId = worklist.front();
+		BlockIdx blockIdx = worklist.front();
 		worklist.pop();
-		inWorklist.erase(blockId);
-		controlFlowBlock &block = this->controlFlowGraph[blockId];
+		inWorklist.erase(blockIdx);
+		controlFlowBlock &block = this->controlFlowGraph[blockIdx];
 
-		clog << "-=-=-=-=-=-=-=-=-=-=-=-=- worklist count: " << workCount << " <><> block popped from queue: " << blockId << endl;
+		clog << "-=-=-=-=-=-=-=-=-=-=-=-=- worklist count: " << workCount << " <><> block popped from queue: " << blockIdx << endl;
 
 		// Populate pre- definitions based on in-blocks
 		unordered_map<VarIdx, VarDSAIdx> liveDefinitions;
 		if (not block.reset) {
-			liveDefinitions = this->mergeDefinitionsBeforeBlock(blockId);
+			liveDefinitions = this->mergeDefinitionsBeforeBlock(blockIdx);
 		}
 		block.preDefs = liveDefinitions;
 
@@ -1593,7 +1593,7 @@ void graph::convertToDSA() {
 			if (block.kills.contains(transitionIdx)) {
 				isRedefinition = true;
 				VarIdx redefinedVar = block.gens[transitionIdx];
-				//size_t prev_defining_transition = block.kills[transitionIdx];  //TODO: did we deprecate .kills? We need to search it down
+				//TransitionIdx prev_defining_transition = block.kills[transitionIdx];  //TODO: did we deprecate .kills? We need to search it down
 				liveDefinitions[redefinedVar]++;
 
 				// Append first-time definition
@@ -1642,7 +1642,7 @@ void graph::convertToDSA() {
 
 		// Update post-definitions, if local transformations came out differently this time
 		// NOTE: if local transformations are deterministic, wouldn't this be equivalent to "were pre-Defs different from last time?"
-		// NOTE: for theoretical reference, block.postPef := transfer(blockId, block.preDefs) // b.gen u (b.predef - b.kill)
+		// NOTE: for theoretical reference, block.postPef := transfer(blockIdx, block.preDefs) // b.gen u (b.predef - b.kill)
 		if (liveDefinitions != block.postDefs) {
 			clog << " >> novel merge> ";
 			std::for_each(liveDefinitions.begin(), liveDefinitions.end(), [this](auto &d){
@@ -1650,7 +1650,7 @@ void graph::convertToDSA() {
 			clog << endl;
 			block.postDefs = liveDefinitions;
 
-			for (const size_t &out : block.outs) {
+			for (BlockIdx out : block.outs) {
 				if (not inWorklist.contains(out)) {
 					worklist.push(out);
 					inWorklist.insert(out);
@@ -1756,11 +1756,11 @@ vector<VarIdx> getVarsFromExpression(const arithmetic::Expression &e) {
 	if (e.top.isVar() && e.size() == 0) { return {e.top.index}; }
 
 	vector<VarIdx> vars;
-	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+	for (const arithmetic::Operand &subExpr : e.exprIndex()) {
 
 		// Iterate across all sub-expression leaves
 		//TODO: introduce some simpler "walkLeaves"-esque helper method into Expression?
-		const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+		const arithmetic::Operation &operation = *e.getExpr(subExpr.index);
 		for (const arithmetic::Operand &operand : operation.operands) {
 			if (operand.type == arithmetic::Operand::Type::VAR) {
 				vars.push_back(operand.index);
@@ -1776,9 +1776,9 @@ vector<VarIdx> findInputChannelsInExpression(const arithmetic::Expression &e) {
 	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
 
 	vector<VarIdx> inputChannels;
-	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+	for (const arithmetic::Operand &subExpr : e.exprIndex()) {
 		// Iterate across all sub-expression leaves
-		const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+		const arithmetic::Operation &operation = *e.getExpr(subExpr.index);
 		for (const arithmetic::Operand &operand : operation.operands) {
 			if (operand.cnst.sval == "recv") {
 				inputChannels.push_back(e.sub.elems.elems[0].operands[0].index);
@@ -1794,9 +1794,9 @@ vector<VarIdx> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 	if (e.isUndef() || (e.top.isVar() && e.size() == 0)) { return {}; }
 
 	vector<VarIdx> outputChannels;
-	for (const arithmetic::Operand &sub_expr : e.exprIndex()) {
+	for (const arithmetic::Operand &subExpr : e.exprIndex()) {
 		// Iterate across all sub-expression leaves
-		const arithmetic::Operation &operation = *e.getExpr(sub_expr.index);
+		const arithmetic::Operation &operation = *e.getExpr(subExpr.index);
 		for (const arithmetic::Operand &operand : operation.operands) {
 			if (operand.cnst.sval == "send") {
 				outputChannels.push_back(e.sub.elems.elems[0].operands[0].index);
@@ -1855,7 +1855,7 @@ vector<VarIdx> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 
 
 //petri::iterator graph::splitVarUses() { }
-//petri::iterator graph::renameVarUseAferTransition(size_t insertionTransitionIdx, size_t preVar, size_t postVar) {
+//petri::iterator graph::renameVarUseAferTransition(TransitionIdx insertionTransitionIdx, VarDSAIdx preVar, VarDSAIdx postVar) {
 //
 //	arithmetic::Action reassignment;
 //	reassignment.lvalue = arithmetic::Expression::varOf(postVar);
@@ -1863,20 +1863,20 @@ vector<VarIdx> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 //
 //	chp::transition renameTransition(
 //			arithmetic::Expression::vdd(), arithmetic::Choice({{reassignment}}));
-//	//size_t forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
+//	//TransitionIdx forkTransitionIdx = this->transitions.insert(forkAssignmentTransition);
 //	//petri::iterator forkIt(petri::transition::type, forkTransitionIdx);
 //
 //	//TODO: extract this out (to be computed before when identifying transition, this way I can use it either right after the definiton or somewhere else)
 //	useDefChain &varUseDefChain = this->useDefChains[preVar];
 //	if (varUseDefChain.defs.empty()) { continue; }
-//	size_t insertionTransitionIdx = varUseDefChain.defs[0];
+//	TransitionIdx insertionTransitionIdx = varUseDefChain.defs[0];
 //	//clog << this->transitions[insertionTransitionIdx] << endl;
 //
 //	petri::iterator insertionPoint(petri::transition::type, insertionTransitionIdx);
 //	return this->super::insert_after(insertionPoint, renameTransition);
 //}
 
-//size_t graph::getVarDefTransition(size_t varIdx) {
+//TransitionIdx graph::getVarDefTransition(VarIdx varIdx) {
 //	useDefChain &chain = this->getVarUseDefChain(varIdx);
 //	return chain.defs[0];
 //}
@@ -1888,9 +1888,9 @@ vector<VarIdx> findOutputChannelsInExpression(const arithmetic::Expression &e) {
 //};
 //
 //struct VarRef {
-//	size_t idx;
+//	VarIdx idx;
 //	ChannelType type;
-//	size_t channelIdx;
+//	VarIdx channelIdx;
 //};
 
 
@@ -2663,5 +2663,6 @@ vector<graph> graph::project() {
 	clog << "projected." << endl;
 	return processes;
 }
+
 
 }
