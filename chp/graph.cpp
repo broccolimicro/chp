@@ -1,6 +1,5 @@
 #include "graph.h"
 
-#include <filesystem>
 #include <queue>
 #include <ranges>
 
@@ -9,10 +8,11 @@
 #include <common/message.h>
 #include <common/text.h>
 #include <common/mapping.h>
-#include <interpret_arithmetic/export.h>
 
-//TODO: delete after development
+//TODO(steven.kneiser): delete after development
 #include <algorithm>
+#include <filesystem>
+#include <interpret_arithmetic/export.h>
 #include <interpret_chp/export_dot.h>
 #include "../tests/dot.h"
 
@@ -571,15 +571,21 @@ vector<graph> graph::decompose() {  //chp::graph &g) {}
 	//// if (debug) {}
 #ifdef GRAPHVIZ_SUPPORTED
 	std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string debugDir = debugDirPath.string();
 	string prefix = "";
 	string dsa_filename = (debugDirPath / (prefix + this->name + "_dsa.png")).string();
-	string dsa_dot = chp::export_graph(*this, true).to_string();
+	string dsa_dot = chp::export_graph(*this, true, false).to_string();
 	gvdot::render(dsa_filename, dsa_dot);
 #endif
 	////
 
 	this->computeUseDefChains();
+#ifdef GRAPHVIZ_SUPPORTED
+	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
+	//string prefix = "";
+	string analysis_filename = (debugDirPath / (prefix + this->name + "_analysis.png")).string();
+	string analysis_dot = chp::export_analysis(*this, true, true).to_string();
+	gvdot::render(analysis_filename, analysis_dot);
+#endif
 	vector<graph> processes = this->project();
 
 	cout << "decomposed." << endl << endl;
@@ -2386,6 +2392,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 		//	cout << ">/< guard to split: " << endl;
 
 		//TODO: RETVRN HERE
+		this->splitGuard();
 		//Great, we've found a multi-def selection!
 		//  now 1) each of these outGuards now need a copy process
 		//////set<VarIdx> _copiedVars;  //TODO(steven.kneiser): dedup copyProcesses by sharing/externalizing this vars
@@ -2401,6 +2408,8 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 	clog << "rewrote each guard var used in multi-definition selections as a Copy Process." << endl;
 }
+
+void graph::splitGuard() {}  //TODO(steven.kneiser): to impl
 
 
 void graph::rewriteAssignmentsAsChannels(

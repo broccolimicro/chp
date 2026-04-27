@@ -5,6 +5,7 @@
 #include <arithmetic/action.h>
 #include <petri/graph.h>
 
+#include "analysis.h"
 #include "state.h"
 
 namespace chp
@@ -169,8 +170,9 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	~graph();
 
 	string name;
-
 	vector<variable> vars;
+	unordered_map<VarIdx, useDefChain> useDefChains;
+	//TODO(steven.kneiser): vector<useDefChain> now sufficient? ...once we abstract other internal structs to analysis.h
 
 	bool controlFlowGraphReady = false;
 	bool useDefChainsReady = false;
@@ -234,20 +236,14 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void computeControlFlowGraph();
 	void convertToDSA();
 
-	struct useDefChain {
-		string name;
-		//VarIdx index;
-		//VarDSAIdx DSAIndex = 0;
-		vector<TransitionIdx> defs;
-		vector<TransitionIdx> uses;
-	};
-
-	unordered_map<VarIdx, useDefChain> useDefChains;
 	void setUseDef(VarIdx var_idx, TransitionIdx transition_idx, bool is_definition=false);
-	//TODO(steven.kneiser): even if they update multiple useDefChains, ideally this would return a more transparent vec/set of new useDefChainss without modifying this->useDefChains in-place. Sometimes I just want to read.
+	//TODO(steven.kneiser): even if they update multiple useDefChains,
+	// ideally this would return a more transparent vec/set of new useDefChainss
+	// without modifying this->useDefChains in-place. Sometimes I just want to read.
 	void extractUseDefFromExpression(TransitionIdx transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
 	void extractUseDefFromTransition(TransitionIdx transition_idx);
 	void computeUseDefChains();
+
 	bool isTargetVarOfTransition(VarIdx varIdx, TransitionIdx transitionIdx);
 
 	//TODO(steven.kneiser): better name for higher-order transformation? substitution? variable renaming? lifetime / live range splitting?
@@ -267,6 +263,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
 
+	void splitGuard();  //TODO(steven.kneiser): just a temporary dev artifact [for observability]
 	void rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 			unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
@@ -279,7 +276,8 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	vector<graph> project();
 	vector<graph> decompose();
 
-	//string to_string(const arithmetic::Expression &e) const; //TODO: idea for pretty-printing WITH var names rendered, but I don't want to make dependency
+  //TODO: idea for pretty-printing WITH var names rendered, but I don't want to make dependency
+	//string to_string(const arithmetic::Expression &e) const;
 	void renderReset();
 };
 
