@@ -69,11 +69,12 @@ using petri::choice;
 using petri::sequence;
 
 //TODO(steven.kneiser): migrate named-size_t's beyond this namespace?
+typedef size_t BlockIdx;
 typedef size_t TransitionIdx;
+typedef size_t UseDefIdx;
+typedef size_t VarDSAIdx;
 typedef size_t VarIdx;
 typedef size_t VarValue;
-typedef size_t VarDSAIdx;
-typedef size_t BlockIdx;
 
 struct place : petri::place
 {
@@ -171,8 +172,18 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	string name;
 	vector<variable> vars;
-	unordered_map<VarIdx, useDefChain> useDefChains;
+	vector<useDefChain> useDefs;  //TODO(steven.kneiser): slowly migrating here, from useDefChains map
+	//TODO(steven.kneiser): even if we COUILD get away with vector<VarIdx> above ^^^, SHOULD we? I think UseDefIdx is much more appropriate ...unless they're always shared state ...in which case why SHOULDN'T variable just have  a pointer to useDefChain? Because analysis should be owned by the graph?
+
+	unordered_map<VarIdx, useDefChain> useDefChains;  //TODO(steven.kneiser): as a migration step, migrate to Mapping<VarIdx, UseDefIdx>?? meh, just go straight there
 	//TODO(steven.kneiser): vector<useDefChain> now sufficient? ...once we abstract other internal structs to analysis.h
+	UseDefIdx getCopyProcess(VarIdx varIdx);
+	void createCopyProcessForksForMultiUseVars();
+	TransitionIdx createVarDefFork(VarIdx sourceVarIdx);
+	//TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, TransitionIdx targetTransitionIdx);
+	TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, VarIdx newBranchVarIdx); //, TransitionIdx varUseTransitionIdx);
+	set<UseDefIdx> copyProcessChainIdxs;  //TODO(steen.kneiser): find a more proper name
+	////useDefChain& getUseDefByVarIdx(VarIdx varIdx);
 
 	bool controlFlowGraphReady = false;
 	bool useDefChainsReady = false;

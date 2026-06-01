@@ -8,26 +8,52 @@ namespace chp
 //TODO(steven.kneiser): ultimately, we should pass around some sort of `[Static]Analysis` pass
 
 //TODO(steven.kneiser): migrate named-size_t's beyond this namespace? Already duplicated in chp/graph.h
+typedef size_t BlockIdx;
 typedef size_t TransitionIdx;
+typedef size_t UseDefIdx;
+typedef size_t VarDSAIdx;
 typedef size_t VarIdx;
 typedef size_t VarValue;
-typedef size_t VarDSAIdx;
-typedef size_t BlockIdx;
 
 struct useDefChain {
-	string name;
+	//TODO(steven.kneiser): UseDefIdx index;
+	string name;  //TODO(steven.kneiser): delete. Should be reference/looked-up in this->vars
 	VarIdx varIdx;
-	//VarDSAIdx DSAIndex = 0;
+	//VarDSAIdx varDSAIdx = 0;  //std::numeric_limits<size_t>::max();
+	//bool isChannel = false;  //TODO(steven.kneiser): perhaps this should be more like ProjectionItem, if we're going to encapsulate ProjSets
 	vector<TransitionIdx> defs;
 	vector<TransitionIdx> uses;
 
+
+	//TODO(steven.kneiser): these should eventually be vector<useDefChain*>,
+  //   no: vector<useDefIdx> into g.useDefChains would fit our pattern
+	vector<UseDefIdx> dependsOn;
+	vector<UseDefIdx> requiredFor;
 	//TODO(steven.kneiser): integrate depSet & invDepSet here below
 	//unordered_map<VarIdx, TransitionIdx> next, prev;
 	//unordered_map<TransitionIdx, VarIdx> next, prev; ??
 	//Mapping<size_t>(...) neighbors;  // should be TransitionIdx <-> VarIdx
 	// perhaps ...
+
+	//TODO(steven.kneiser): aHA: here's where our idempotent/singleton should dedup/resolve/merge
+	UseDefIdx copyProcess = std::numeric_limits<UseDefIdx>::max();
+	//TODO(steven.kneiser): should this be a vector<TrIdx> for each tail?
+	//   no, this should become another useDefIdx
+	//IDEA(steven.kneiser): while UseDefIdx should be more correct,
+	//  I really WANT just a: TransitionIdx fork;
+
+	bool hasCopyProcess() const {
+		return this->copyProcess != std::numeric_limits<UseDefIdx>::max();
+	}
+
+	//TODO(steven.kneiser): getDefinition(), getCopyProcess(), etc etc etc helpers to handle the frequent error-handling/bound-checking
+	//   ...aHA, also chp::graph should have a getUseDef() to handle the errors too
+	// or at very least follow the "isValid" pattern we use with Transitions
+
 	friend ostream &operator<<(std::ostream &os, const useDefChain &chain);
 };
+
+
 
 
 //TODO(steven.kneiser): First, migrate these from chp::graph. Getters, setters, etc. Explicitly pass in a chp::graph
