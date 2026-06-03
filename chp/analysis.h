@@ -36,7 +36,8 @@ struct useDefChain {
 	// perhaps ...
 
 	//TODO(steven.kneiser): aHA: here's where our idempotent/singleton should dedup/resolve/merge
-	UseDefIdx copyProcess = std::numeric_limits<UseDefIdx>::max();
+	//VarIdx forkVarIdx = std::numeric_limits<VarIdx>::max();
+	TransitionIdx copyProcess = std::numeric_limits<UseDefIdx>::max();  //TODO(steven.kneiser): return to UseDefIdx
 	//TODO(steven.kneiser): should this be a vector<TrIdx> for each tail?
 	//   no, this should become another useDefIdx
 	//IDEA(steven.kneiser): while UseDefIdx should be more correct,
