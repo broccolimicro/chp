@@ -182,6 +182,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	TransitionIdx createVarDefFork(VarIdx sourceVarIdx);
 	//TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, TransitionIdx targetTransitionIdx);
 	TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, VarIdx newBranchVarIdx); //, TransitionIdx varUseTransitionIdx);
+	petri::iterator getForkUmbilicalCord(petri::iterator forkTransitionIt);
 	set<UseDefIdx> copyProcessChainIdxs;  //TODO(steen.kneiser): find a more proper name
 	////useDefChain& getUseDefByVarIdx(VarIdx varIdx);
 
@@ -264,7 +265,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	//TODO(steven.kneiser): ideal API: just pass DSA'd VarIdx & let these helpers search & identify the defining definition
 	void rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx channelIdx);
-	void rewriteAssignmentAsCopyProcess(TransitionIdx transitionIdx, const set<VarIdx> &uses);
+	void rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx defTransitionIdx);  //const set<VarIdx> &uses
 
 	void rewriteEachSingleUseVarAsDirectChannel(
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
