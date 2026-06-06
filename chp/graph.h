@@ -185,6 +185,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	petri::iterator getForkUmbilicalCord(petri::iterator forkTransitionIt);
 	set<UseDefIdx> copyProcessChainIdxs;  //TODO(steen.kneiser): find a more proper name
 	////useDefChain& getUseDefByVarIdx(VarIdx varIdx);
+	//TODO(steven.kneiser): VarIdx getConsumerVar(TransitionIdx transitionIdx);
 
 	bool controlFlowGraphReady = false;
 	bool useDefChainsReady = false;
@@ -244,16 +245,17 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	//VarIdx getUnenumeratedVar(VarIdx varIdx);
 
 	void increaseBlockVarToDSAIndex(BlockIdx blockIdx, VarIdx varIdx, VarDSAIdx dsaCountAfter);
-	unordered_map<VarIdx, VarDSAIdx> mergeDefinitionsBeforeBlock(BlockIdx blockId);
+	unordered_map<VarIdx, VarDSAIdx> mergeDefinitionsBeforeBlock(BlockIdx blockIdx);
 	void computeControlFlowGraph();
 	void convertToDSA();
 
-	void setUseDef(VarIdx var_idx, TransitionIdx transition_idx, bool is_definition=false);
+	void setUseDef(TransitionIdx transitionIdx, VarIdx varIdx,
+			bool isDefinition=false, bool isChannel=false, bool isSend=false);
 	//TODO(steven.kneiser): even if they update multiple useDefChains,
 	// ideally this would return a more transparent vec/set of new useDefChainss
 	// without modifying this->useDefChains in-place. Sometimes I just want to read.
-	void extractUseDefFromExpression(TransitionIdx transition_idx, const arithmetic::Expression& expr, bool is_definition=false);
-	void extractUseDefFromTransition(TransitionIdx transition_idx);
+	void extractUseDefFromExpression(TransitionIdx transitionIdx, const arithmetic::Expression& expr, bool isDefinition=false);
+	void extractUseDefFromTransition(TransitionIdx transitionIdx);
 	void computeUseDefChains();
 
 	bool isTargetVarOfTransition(VarIdx varIdx, TransitionIdx transitionIdx);

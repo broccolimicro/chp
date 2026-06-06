@@ -10,21 +10,20 @@ ostream &operator<<(std::ostream &os, const useDefChain &chain) {
 		os << chain.name << "  @" << chain.varIdx << endl << endl;
 
     os << "defs: ";
-    for (TransitionIdx def = 0; def < chain.defs.size(); ++def) {
-        os << chain.defs[def];
-        if (def + 1 < chain.defs.size())
-            os << ", ";
+    for (auto it = chain.defs.begin(); it != chain.defs.end(); ++it) {
+			if (it != chain.defs.begin()) { os << ", "; }
+			os << *it;
     }
 
     os << endl << "uses: ";
-    for (TransitionIdx use = 0; use < chain.uses.size(); ++use) {
-        os << chain.uses[use];
-        if (use + 1 < chain.uses.size())
-            os << ", ";
+    for (auto it = chain.uses.begin(); it != chain.uses.end(); ++it) {
+			if (it != chain.uses.begin()) { os << ", "; }
+        os << *it;
     }
 
-		string copyProc = (chain.hasCopyProcess()) ? std::to_string(chain.copyProcess) : "ºø";
-    os << endl << "CopyProc? " << copyProc;
+		string isCopyProc = (chain.hasCopyProcess()) ? std::to_string(chain.copyProcess) : "ºø";
+    os << endl << "Channel? " << (chain.isChannel ? (chain.isSend ? "Y!" : "Y?") : "N");
+    os << endl << "CopyProc? " << isCopyProc;
     return os;
 }
 

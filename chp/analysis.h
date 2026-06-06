@@ -19,16 +19,18 @@ struct useDefChain {
 	//TODO(steven.kneiser): UseDefIdx index;
 	string name;  //TODO(steven.kneiser): delete. Should be reference/looked-up in this->vars
 	VarIdx varIdx;
+	bool isChannel = false;
+	bool isSend = false;
 	//VarDSAIdx varDSAIdx = 0;  //std::numeric_limits<size_t>::max();
 	//bool isChannel = false;  //TODO(steven.kneiser): perhaps this should be more like ProjectionItem, if we're going to encapsulate ProjSets
-	vector<TransitionIdx> defs;
-	vector<TransitionIdx> uses;
+	set<TransitionIdx> defs;
+	set<TransitionIdx> uses;
 
 
 	//TODO(steven.kneiser): these should eventually be vector<useDefChain*>,
   //   no: vector<useDefIdx> into g.useDefChains would fit our pattern
-	vector<UseDefIdx> dependsOn;
-	vector<UseDefIdx> requiredFor;
+	set<UseDefIdx> dependsOn;
+	set<UseDefIdx> requiredFor;
 	//TODO(steven.kneiser): integrate depSet & invDepSet here below
 	//unordered_map<VarIdx, TransitionIdx> next, prev;
 	//unordered_map<TransitionIdx, VarIdx> next, prev; ??
@@ -46,6 +48,12 @@ struct useDefChain {
 	bool hasCopyProcess() const {
 		return this->copyProcess != std::numeric_limits<UseDefIdx>::max();
 	}
+
+	//TODO(steven.kneiser): implement
+	//bool hasConsumerVar() const { return false; }
+	//VarIdx getConsumervar() const {
+	//	return 0;
+	//}
 
 	//TODO(steven.kneiser): getDefinition(), getCopyProcess(), etc etc etc helpers to handle the frequent error-handling/bound-checking
 	//   ...aHA, also chp::graph should have a getUseDef() to handle the errors too

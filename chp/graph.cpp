@@ -579,6 +579,7 @@ vector<graph> graph::decompose() {  //chp::graph &g) {}
 #endif
 
 	this->computeUseDefChains();
+	//TODO(steven.kneiser): this is merely a pre-requisite of projection, so we should just let project() internally check useDefsReady or recalculate
 
 #ifdef GRAPHVIZ_SUPPORTED
 	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
@@ -1310,22 +1311,26 @@ void graph::computeControlFlowGraph() {
 	this->controlFlowGraphReady = true;
 }
 
-void graph::setUseDef(VarIdx varIdx, TransitionIdx transitionIdx, bool isDefinition) {
+void graph::setUseDef(TransitionIdx transitionIdx, VarIdx varIdx, bool isDefinition, bool isChannel, bool isSend) {
 	string varName = this->netAt(varIdx);
 
 	// New variable? Record its name
-	if (this->useDefChains.find(varIdx) == this->useDefChains.end()) {
+	if (not this->useDefChains.contains(varIdx)) {	//this->useDefChains.find(varIdx) == this->useDefChains.end()
 		this->useDefChains[varIdx].name = varName;
 		this->useDefChains[varIdx].varIdx = varIdx;
+		this->useDefChains[varIdx].isSend = isSend;
+		this->useDefChains[varIdx].isChannel = isChannel;
 	}
 
 	if (isDefinition) {
-		this->useDefChains[varIdx].defs.push_back(transitionIdx);
+		this->useDefChains[varIdx].defs.insert(transitionIdx);
 		//this->defs[varName].push_back(transitionIdx);
 		clog << "DEF " << varName << " @ " << transitionIdx << endl;
 
 	} else {
-		this->useDefChains[varIdx].uses.push_back(transitionIdx);
+		this->useDefChains[varIdx].uses.insert(transitionIdx);
+		this->useDefChains[varIdx].isChannel = isChannel;
+		this->useDefChains[varIdx].isSend = isSend;
 		//this->uses[varName].push_back(transitionIdx);
 		clog << "use " << varName << " @ " << transitionIdx << endl;
 	}
@@ -1333,9 +1338,12 @@ void graph::setUseDef(VarIdx varIdx, TransitionIdx transitionIdx, bool isDefinit
 
 void graph::extractUseDefFromExpression(TransitionIdx transitionIdx, const arithmetic::Expression &e, bool isDefinition) {
 	if (isDefinition && e.top.isVar() && e.size() == 0) {
-		this->setUseDef(e.top.index, transitionIdx, true);
+		this->setUseDef(transitionIdx, e.top.index, true);
 
 	} else if (not e.isUndef()) { //if (e.isExpr()) {}
+		//vector<VarIdx> inputChannels = findInputChannelsInExpression(e);
+		//vector<VarIdx> outputChannels = findOutputChannelsInExpression(e);
+
 		for (const arithmetic::Operand &subExpr : e.exprIndex()) {
 
 			// Iterate across all sub-expression leaves
@@ -1343,24 +1351,70 @@ void graph::extractUseDefFromExpression(TransitionIdx transitionIdx, const arith
 			const arithmetic::Operation &operation = *e.getExpr(subExpr.index);
 			for (const arithmetic::Operand &operand : operation.operands) {
 				if (operand.type == arithmetic::Operand::Type::VAR) {
-					this->setUseDef(operand.index, transitionIdx, isDefinition);
+					this->setUseDef(transitionIdx, operand.index, isDefinition);
 				}
 			}
 		}
 	} // else if (not e.isUndef()) {}
 }
 
+
+//TODO(steven.kneiser): get inspiration from how we compute DependencySets
 void graph::extractUseDefFromTransition(TransitionIdx transitionIdx) {
 	const chp::transition &transition = this->transitions[transitionIdx];
-	this->extractUseDefFromExpression(transitionIdx, transition.guard);
+	this->extractUseDefFromExpression(transitionIdx, transition.guard, false);
 
+	// Crawl guard for Use-Def information
+	//NOTE(steven.kneiser): assume we do not support channel send's in guards
+	vector<VarIdx> guardVars = getVarsFromExpression(transition.guard);
+	vector<VarIdx> inputChannelsInGuard = findInputChannelsInExpression(transition.guard);
+	set<VarIdx> guardRecvLookup(inputChannelsInGuard.begin(), inputChannelsInGuard.end());
+
+	for (VarIdx guardVar : guardVars) {
+		if (guardRecvLookup.contains(guardVar)) {
+			this->setUseDef(transitionIdx, guardVar, false, true, false);
+		} else {
+			this->setUseDef(transitionIdx, guardVar, false, false, false);
+		}
+	}
+
+	// Crawl transition statements for Use-Def information
 	const arithmetic::Choice &choice = transition.action;
 	for (const auto &term : choice.terms) {
 		for (const auto &action : term.actions) {
-			this->extractUseDefFromExpression(transitionIdx, action.lvalue, true);
+			//clog << endl << " {{ " << endl
+			//		<< transition.guard.to_string()
+			//		<< endl << " -> " << endl
+			//		<< action.lvalue.to_string()
+			//		<< endl << " := " << endl
+			//		<< action.rvalue.to_string()
+			//		<< endl << " }} " << endl;
+
+			if (not action.lvalue.isUndef()) {
+				this->extractUseDefFromExpression(transitionIdx, action.lvalue, true);
+				//this->setUseDef(transitionIdx, action.lvalue.top.index, true, false, false);  // more direct, until we ACTUALLY support non-var lvalues
+			}
 
 			//TODO: isDefinition parameter could be more robust ":=" assignment operand matching
-			this->extractUseDefFromExpression(transitionIdx, action.rvalue);
+			//this->extractUseDefFromExpression(transitionIdx, action.rvalue, false);
+
+			vector<VarIdx> rightVars = getVarsFromExpression(action.rvalue);
+			vector<VarIdx> inputChannels = findInputChannelsInExpression(action.rvalue);
+			vector<VarIdx> outputChannels = findOutputChannelsInExpression(action.rvalue);
+			set<VarIdx> recvLookup(inputChannels.begin(), inputChannels.end());
+			set<VarIdx> sendLookup(outputChannels.begin(), outputChannels.end());
+
+			for (VarIdx rightVar : rightVars) {
+				if (recvLookup.contains(rightVar)) {
+					this->setUseDef(transitionIdx, rightVar, false, true, false);
+
+				} else if (sendLookup.contains(rightVar)) {
+					this->setUseDef(transitionIdx, rightVar, false, true, true);
+
+				} else {
+					this->setUseDef(transitionIdx, rightVar, false, false, false);
+				}
+			}
 		}
 	}
 }
@@ -1369,10 +1423,10 @@ void graph::computeUseDefChains() {
 	cout << endl << "computing useDef chains." << endl;
 	this->useDefChainsReady = false;
 
-	for (TransitionIdx transition_idx = 0; transition_idx < this->transitions.size(); transition_idx++) {
-		if (not this->transitions.is_valid(transition_idx)) { continue; }
+	for (TransitionIdx transitionIdx = 0; transitionIdx < this->transitions.size(); transitionIdx++) {
+		if (not this->transitions.is_valid(transitionIdx)) { continue; }
 
-		this->extractUseDefFromTransition(transition_idx);
+		this->extractUseDefFromTransition(transitionIdx);
 	}
 
 	//TODO(steven.kneiser): we're migrating off this->useDefChains to this->useDefs
@@ -1766,6 +1820,7 @@ void graph::convertToDSA() {
 	clog << "DSA'd." << endl;
 }
 
+//TODO(steven.kneiser): perf optimization: make these helpers return sets for quicker membership lookups
 vector<VarIdx> getVarsFromExpression(const arithmetic::Expression &e) {
 	if (e.isUndef()) { return {}; }
 	if (e.top.isVar() && e.size() == 0) { return {e.top.index}; }
@@ -2105,10 +2160,10 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 
 		// Substitute new sendTransition for previous assignment
 		//TODO(steven.kneiser): perf optimization: modify useDefChain in-place
-		vector<VarIdx> &varUses = this->useDefChains[sendVar].uses;
-		auto it = std::find(varUses.begin(), varUses.end(), transitionIt.index);
-		if (it != varUses.end()) { varUses.erase(it); }
-		varUses.push_back(sendTransitionIt.index);
+		set<VarIdx> &varUses = this->useDefChains[sendVar].uses;
+		if (varUses.contains(transitionIt.index)) { varUses.erase(transitionIt.index); }
+
+		varUses.insert(sendTransitionIt.index);
 		this->useDefChains[sendVar].uses = varUses;
 	}
 
@@ -2205,15 +2260,14 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 
 	//TODO(steven.kneiser): perf optimization: this is a sloppy re-retrieval of the defTransitionIdx's behind the UseDefs (should be indexed more reasonably by UseDefs. is it already?)
 	//IDEA: or perhaps we should be able to have a createVarDefBranch that accepts a more direct parameter. Would a VarIdx or TransitionIdx of the newBranch be simpler?)
-	const vector<TransitionIdx> &useTransitionIdxs = varAssignedUseDefChain.uses;
-	vector<VarIdx> uses;
+	const set<TransitionIdx> &useTransitionIdxs = varAssignedUseDefChain.uses;
+	set<VarIdx> uses;
 	for (TransitionIdx useTransitionIdx : useTransitionIdxs) {
 		for (auto &[varIdx, chain] : this->useDefChains) {
 
 			//TODO(steven.kneiser): oops, what about usages in channel-sends? We need SOME notion of a "target" variable
-			auto it = std::find(chain.defs.begin(), chain.defs.end(), useTransitionIdx);
-			if (it != chain.defs.end()) {
-				uses.push_back(varIdx);
+			if (chain.defs.contains(useTransitionIdx)) {
+				uses.insert(varIdx);
 				break;
 			}
 		}
@@ -2426,7 +2480,7 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		// Ideally, we should just be doing a singular surgical remapping in "this" one transition, not sloppily innefficiently search ALL transitions
 
 		// Rewrite "x = ..." as "CHAN.send(x)" & "x_usage_n = CHAN.recv()" in parallel
-		TransitionIdx defTransitionIdx = dependencyUseDefChain.defs[0];
+		TransitionIdx defTransitionIdx = *dependencyUseDefChain.defs.begin();
 		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
 		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "~LONE_CHAN--");
 		this->rewriteAssignmentAsChannel(defTransitionIt.index, channelIdx);
@@ -2731,7 +2785,7 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 	// ...erm, do we need to ensure this happens exlusively BEFORE channel insertion? (probably, channel-insertion feels like it should be the VERY LAST thing in rewriteAssignmentsAsChannels())
 
 	if (not this->transitions.is_valid(forkTransitionIdx)) { cerr << "ERROR: forkTransitionIdx @ T" << forkTransitionIdx << " isn't valid. No graceful failure." << endl; return 0; }
-	chp::transition &forkTransition = this->transitions[forkTransitionIdx];
+	//chp::transition &forkTransition = this->transitions[forkTransitionIdx];
 
 	arithmetic::Action branchAssignment(Expression::varOf(branchVarIdx), Expression::varOf(varForkIdx));
 	chp::transition branchTransition(Expression::vdd(), arithmetic::Choice({{branchAssignment}}));
@@ -2793,7 +2847,7 @@ void graph::createCopyProcessForksForMultiUseVars() {
 
 			//TODO(steven.kneiser): handle properly, instead of quiet failure?
 			if (chain.defs.empty()) { clog << "ERROR: copyVar definition not found for var `" << chain.name << "`?? skipping." << endl; continue; }
-			TransitionIdx defTransitionIdx = chain.defs[0];
+			TransitionIdx defTransitionIdx = *chain.defs.begin();
 
 			//TODO(steven.kneiser): handle properly, instead of quiet failure?
 			if (not this->transitions.is_valid(defTransitionIdx)) { clog << "ERROR: copyVar definition not a valid transition at index " << defTransitionIdx << "?? skipping." << endl; continue; }
@@ -2811,7 +2865,7 @@ void graph::createCopyProcessForksForMultiUseVars() {
 			}
 
 			VarIdx varForkIdx = this->getEnumeratedVar(varIdx, 0, "~NEO_fork--");
-			VarIdx varSourceIdx = this->getEnumeratedVar(varIdx, 0, "~lone--");
+			//VarIdx varSourceIdx = this->getEnumeratedVar(varIdx, 0, "~lone--");
 			//chain.copyProcess = varForkIdx;  //TODO(steven.kneiser): egregious type violation, should be UseDefIdx
 																			//  ...where we look it up via "chain.copyProcess.def/s[0]",
 
@@ -2958,7 +3012,7 @@ void graph::rewriteAssignmentsAsChannels(
 		//  ...this assumes our forkTransition (the base of the Copy Process) only has one out-place connecting directly to the dummy skip-transition, pointed to by every branchTransition
 		//VarIdx varForIdx = chain.varIdx;
 		if (chain.defs.empty()) { error("", "chain is empty", __FILE__, __LINE__); continue; }
-		TransitionIdx forkTransitionIdx = chain.defs[0];
+		TransitionIdx forkTransitionIdx = *chain.defs.begin();
 		petri::iterator forkTransitionIt(petri::transition::type, forkTransitionIdx);
 		//vector<petri::iterator> outPlaceIts = this->next(forkTransitionIt);
 		//if (outPlacesIts.empty()) { cerr << "ERROR: no petri::next() children for forkTransition at index " << forkTransitionIdx << ". No graceful failure." << endl; return 0; }
@@ -2992,6 +3046,7 @@ void graph::rewriteAssignmentsAsChannels(
 }
 
 
+//TODO(steven.kneiser): perhaps this should be created after & with the help of UseDefs analysis structs instead of crawling transitions?
 unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 	clog << endl << "computing projection sets." << endl;
 
@@ -3014,6 +3069,7 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 		// Extract Dependency Set from transition, if there is any
 		const chp::transition &transition = this->transitions[transitionIdx];
 		vector<VarIdx> guardVars = getVarsFromExpression(transition.guard);
+		//TODO(steven.kneiser): umm, shouldn't guards also be indexed in DepSets or ProjSets as usage? Just noticed this is unused. No warning?
 
 		const arithmetic::Choice &choice = transition.action;
 		for (const auto &term : choice.terms) {
