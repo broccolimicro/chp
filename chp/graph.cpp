@@ -2589,7 +2589,8 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 			allOutGuardVars.insert(outGuardVars.begin(), outGuardVars.end());
 		}
 
-		if (outGens.size() < 2) { continue; }  // Ignore selections not enclosing multiple definitions
+		size_t splitCount = outGens.size();
+		if (splitCount < 2) { continue; }  // Ignore selections not enclosing multiple definitions
 
 		// Great, we've found a multi-def selection [with a guard to split]! 
 		//TODO(steven.kneiser): encapsulate in a "this->splitGuard(guardVar, vector<TransitionIdx> branchDefinitions, ...)"??
@@ -2617,15 +2618,17 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 			// Per each definition (per guard),  ...
 			size_t guardSplitCount = 0;
+			vector<VarIdx> branchVarIdxs;
 			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
+				if (not this->transitions.is_valid(defTransitionIdx)) { cerr << "ERROR: defTransitionIdx @ T" << defTransitionIdx << " isn't valid. Skipping ahead." << endl; continue; }
+				chp::transition &defTransition = this->transitions[defTransitionIdx];
 
 				// Per definition inside branch, create branch of guardVar (the literal split)
 
 				//NOTE(steven.kneiser): the canonical defVar likely won't match the local variation (e.g. DSA made `d` -> `d_1` and other Decomp might make `d_1` -> `d_1~lone--0` etc etc)
 				//TODO(steven.kneiser): source the more relevant DSA++ variant of defVarIdx from defTransitonIdx
+
 				VarIdx localDefVarIdx;
-				if (not this->transitions.is_valid(defTransitionIdx)) { cerr << "ERROR: defTransitionIdx @ T" << defTransitionIdx << " isn't valid. Skipping ahead." << endl; continue; }
-				chp::transition &defTransition = this->transitions[defTransitionIdx];
 				arithmetic::Choice &choice = defTransition.action;
 				for (arithmetic::Parallel &term : choice.terms) {
 					for (arithmetic::Action &action : term.actions) {
@@ -2641,6 +2644,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 				//TODO(steven.kneiser): ugh, swap the name orderings (& idx vs name orientation)
 				VarIdx newBranchVarIdx = this->getEnumeratedVar(guardVarIdx, guardSplitCount, "~gsplit-" + localDefVarName + "~");  //TODO: study other naming examples
+				branchVarIdxs.push_back(newBranchVarIdx);
 				cout << " ==>  " << this->vars[newBranchVarIdx].name << "  @ " << newBranchVarIdx << endl;
 
 				//TransitionIdx branchTransitionIdx = this->createVarDefBranch(localDefVarIdx, newBranchVarIdx, defTransitionIdx);
@@ -2648,31 +2652,62 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 				cout << "   >/<  T" << branchTransitionIdx << endl;
 				//TODO(steven.kneiser): pushd RETVRN HERE to use this new guardVarBranch to name to determine new duplicates of the branch defs (appropriately renamed)
 
-				//// 3) rename target Transition w/ new branch var
-				//if (not this->transitions.is_valid(targetTransitionIdx)) { cerr << "ERROR: targetTransitionIdx @ T" << targetTransitionIdx << " isn't valid. No graceful failure." << endl; return 0; }
-				//chp::transition &targetTransition = this->transitions[targetTransitionIdx];
-
-				//Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
-				//varRename.set(sourceVarIdx, branchVarIdx);
-
-				//arithmetic::Choice &choice = targetTransition.action;
-				//targetTransition.guard.applyVars(varRename);
-				//for (arithmetic::Parallel &term : choice.terms) {
-				//	for (arithmetic::Action &action : term.actions) {
-				//		action.lvalue.applyVars(varRename);
-				//		action.rvalue.applyVars(varRename);
-				//	}
-				//	//break;?
-				//}
-
-				petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-				this->pinch(defTransitionIt);
 
 				//TODO(steven.kneiser): then 4) document this properly in ProjectionSets ...should these be plumbed into createVarDefBranch() as default behavior?
 				//   Meh, let's start here & integrate it if we later discover the desire for ALWAYS. This feels like something that should be part of analysis:useDefs, NOT presumed to always be related to Projection (i.e. that helper should probably stay tight & focused instead of assuming it's exclusively useful for Projection)
 				guardSplitCount++;
 			}
+
+
+			// 3) split transitions containing guardVar w/ new branches of guardVar
+			//NOTE(steven.kneiser): we need an exhaustive branchVarIdxs before we retrace our steps to introduce splits
+			//NOTE(steven.kneiser): how might we approach this differently if we didn't exhaustively decompose, but only split as-needed?
+			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
+				petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
+				if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
+				const chp::transition &defTransition = this->transitions[defTransitionIdx];
+
+				// Does this statement contain the guardVar we need to split?
+				vector<VarIdx> usedGuardVars = getVarsFromExpression(defTransition.guard);
+				bool guardVarFound = std::find(usedGuardVars.begin(), usedGuardVars.end(), guardVarIdx) != usedGuardVars.end();
+
+				const arithmetic::Choice &choice = defTransition.action;
+				for (arithmetic::Parallel term : choice.terms) {
+					for (arithmetic::Action action : term.actions) {
+						vector<VarIdx> usedRexprVars = getVarsFromExpression(action.rvalue);
+						guardVarFound |= std::find(usedRexprVars.begin(), usedRexprVars.end(), guardVarIdx) != usedRexprVars.end();
+					}
+				}
+
+				if (not guardVarFound) { continue; }  // this statement doesn't contain guardVar
+
+				// For statements containing the guardVar, make copies for each split/branch
+				for (VarIdx branchVarIdx : branchVarIdxs) {
+					Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
+					varRename.set(guardVarIdx, branchVarIdx);
+
+					//petri::iterator defTransitionCopyIt = this->copy(defTransitionIt);
+					//if (not this->transitions.is_valid(defTransitionCopyIt.index)) { internal("", "defTransitionCopyIt.index isn't valid", __FILE__, __LINE__); continue; }
+					//chp::transition &defTransitionCopy = this->transitions[defTransitionCopyIt.index];
+
+					//chp::transition defTransitionCopy = defTransition;  //TODO(steven.kneiser): ayo???
+					if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }   // paranoid, I know
+					chp::transition defTransitionCopy = this->transitions[defTransitionIdx];
+
+					defTransitionCopy.guard.applyVars(varRename);
+					arithmetic::Choice &copyChoice = defTransitionCopy.action;
+					for (arithmetic::Parallel &term : copyChoice.terms) {
+						for (arithmetic::Action &action : term.actions) {
+							//TODO(steven.kneiser): is it possible to also have the guard var in the lvalue? DSA form should guarantee that doesn't happen
+							action.rvalue.applyVars(varRename);
+						}
+					}
+					this->insert_after(defTransitionIt, defTransitionCopy);
+				}
+				this->pinch(defTransitionIt);
+			}
 		}
+
 
 		//TODO(steven.kneiser): now that we've identified & set the stage for projection, save these steps for when the time is right
 		//  then 2) insert copies of this entire block??? ...or save for detection later in projection (with some explicit "splitGuards" hook)
