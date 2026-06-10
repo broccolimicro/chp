@@ -557,6 +557,7 @@ void graph::renderReset() {
 }
 
 
+//TODO(steven.kneiser): should internal-parallel ","-seperated transitions be rendered into parallel transitions before ProcDecomp?
 vector<graph> graph::decompose() {  //chp::graph &g) {}
 	// TODO: Return new additional subgraphs (optional: pass w/ self for forest of processes)
 	cout << endl << "\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`\\_,.=~-^*'\"`" << endl << endl;
@@ -2217,6 +2218,9 @@ UseDefIdx graph::getCopyProcess(VarIdx varIdx) {
 }
 
 
+//IDEA: VarIdx graph::getTransitionTarget(TransitionIdx transitionIdx) {}  ...nah
+
+
 //TODO(steven.kneiser): Why not just pass VarIdx ...since you're going to index into useDefs anyways ...no need to pass set?
 //TODO(steven.kneiser): Done, now re-introduce usageRename remappings for DSA indexing
 void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx defTransitionIdx) {  //, const set<VarIdx> &uses
@@ -2266,7 +2270,8 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 		for (auto &[varIdx, chain] : this->useDefChains) {
 
 			//TODO(steven.kneiser): oops, what about usages in channel-sends? We need SOME notion of a "target" variable
-			if (chain.defs.contains(useTransitionIdx)) {
+			if (chain.defs.contains(useTransitionIdx) 
+					or (chain.isChannel and chain.uses.contains(useTransitionIdx))) {
 				uses.insert(varIdx);
 				break;
 			}
@@ -2296,7 +2301,7 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 
 
 	petri::iterator umbilicalCordIt = this->getForkUmbilicalCord(forkTransitionIt);
-	if (not umbilicalCordIt.valid()) { internal("", "no Copy Process umbilical cord found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); return; }
+	if (not umbilicalCordIt.valid()) { internal("", "no Copy Process umbilical cord found for forkTransition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); return; }
 	vector<petri::iterator> umbilicalCordOutTransitionIts = this->next(umbilicalCordIt);
 	if (umbilicalCordOutTransitionIts.empty()) { internal("", "Copy Process umbilical cord doesn't have any out-transitions", __FILE__, __LINE__); return; }
 	petri::iterator dummyTailIt = umbilicalCordOutTransitionIts[0];
@@ -2333,6 +2338,7 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 
 		petri::iterator branchIt = this->super::insert_alongside(forkTransitionIt, dummyTailIt, branchTransition);
 		branchIts.push_back(branchIt);
+
 
 
 		//// Find this user's defTransitionIdx (could be better merged with "uses" parameter of this function?)
@@ -2379,9 +2385,17 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 		//}
 
 
-		VarIdx branchChannelIdx = this->getEnumeratedVar(varAssigned, 0, "~BRANCH_CHAN~" + userName + "--");  //TODO(steven.kneiser): get full proper name
-		this->rewriteAssignmentAsChannel(branchTransitionIdx, branchChannelIdx);
+		//VarIdx branchChannelIdx = this->getEnumeratedVar(varAssigned, 0, "~BRANCH_CHAN~" + userName + "--");  //TODO(steven.kneiser): get full proper name
+		//this->rewriteAssignmentAsChannel(branchTransitionIdx, branchChannelIdx);
 
+		//TODO(steven.kneiser): Remove pre-channel (wait, this should've already been pinched by the rewriteAsChannel call???
+		petri::iterator branchTransitionIt(petri::transition::type, branchTransitionIdx);
+		this->pinch(branchTransitionIt);
+
+		// Prune remaining redundant umbilical cord (place)
+		petri::iterator umbilicalCordIt = this->getForkUmbilicalCord(forkTransitionIt);
+		if (not umbilicalCordIt.valid()) { internal("", "no Copy Process umbilical cord found for forkTransition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); return; }
+		this->erase(umbilicalCordIt);
 
 
 
@@ -2742,15 +2756,11 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 petri::iterator graph::getForkUmbilicalCord(petri::iterator forkTransitionIt) {
 	for (petri::iterator outPlaceIt : this->next(forkTransitionIt)) {
 		for (petri::iterator outTransitionIt : this->next(outPlaceIt)) {
-
-			if (outTransitionIt.index >= this->transitions.size()) { internal("", "outTransitionIt.index is out-of-bounds", __FILE__, __LINE__); continue; }
-			chp::transition &outTransition = this->transitions[outTransitionIt.index];
 			if (not this->transitions.is_valid(outTransitionIt.index)) { internal("", "outTransition isn't valid", __FILE__, __LINE__); continue; }
+			chp::transition &outTransition = this->transitions[outTransitionIt.index];
 
 			// Is this a skip-transition?
-			if (outTransition.is_vacuous()) {
-				return outPlaceIt;
-			}
+			if (outTransition.is_vacuous()) { return outPlaceIt; }
 		}
 	}
 
@@ -3059,9 +3069,9 @@ void graph::rewriteAssignmentsAsChannels(
 		//this->pinch(outTransitionIt);
 
 
-		// Rewrite Copy Process forks as channels
-		VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~NEO_FORK_CHAN--");
-		this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
+		//TODO(steven.kneiser): RE-ENABLE: Rewrite Copy Process forks as channels
+		//VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~NEO_FORK_CHAN--");
+		//this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
 	}
 
 
