@@ -2385,6 +2385,27 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 		//}
 
 
+		// Rename use of this var with its respective branch
+		Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
+		varRename.set(varAssigned, varBranchIdx);
+
+		useDefChain userChain = this->useDefChains[use];
+		set<TransitionIdx> &useTransitionIdxs = userChain.isChannel ? userChain.uses : userChain.defs;
+		for (TransitionIdx useTransitionIdx : useTransitionIdxs) {
+			if (not this->transitions.is_valid(useTransitionIdx)) { internal("", "useTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
+			chp::transition &userTransition = this->transitions[useTransitionIdx];
+			//TODO(steven.kneiser): RETVRN HERE impl
+
+			userTransition.guard.applyVars(varRename);
+			arithmetic::Choice &choice = userTransition.action;
+			for (arithmetic::Parallel &term : choice.terms) {
+				for (arithmetic::Action &action : term.actions) {
+					action.rvalue.applyVars(varRename);
+				}
+			}
+		}
+
+
 		//VarIdx branchChannelIdx = this->getEnumeratedVar(varAssigned, 0, "~BRANCH_CHAN~" + userName + "--");  //TODO(steven.kneiser): get full proper name
 		//this->rewriteAssignmentAsChannel(branchTransitionIdx, branchChannelIdx);
 
@@ -2678,22 +2699,23 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 			//NOTE(steven.kneiser): how might we approach this differently if we didn't exhaustively decompose, but only split as-needed?
 			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
 				petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-				if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
+				if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "ERROR: defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
 				const chp::transition &defTransition = this->transitions[defTransitionIdx];
 
 				// Does this statement contain the guardVar we need to split?
 				vector<VarIdx> usedGuardVars = getVarsFromExpression(defTransition.guard);
-				bool guardVarFound = std::find(usedGuardVars.begin(), usedGuardVars.end(), guardVarIdx) != usedGuardVars.end();
+				set<VarIdx> usedVarLookup(usedGuardVars.begin(), usedGuardVars.end());
 
 				const arithmetic::Choice &choice = defTransition.action;
 				for (arithmetic::Parallel term : choice.terms) {
 					for (arithmetic::Action action : term.actions) {
 						vector<VarIdx> usedRexprVars = getVarsFromExpression(action.rvalue);
-						guardVarFound |= std::find(usedRexprVars.begin(), usedRexprVars.end(), guardVarIdx) != usedRexprVars.end();
+						set<VarIdx> rexprVarLookup(usedRexprVars.begin(), usedRexprVars.end());
+						usedVarLookup.insert(rexprVarLookup.begin(), rexprVarLookup.end());
 					}
 				}
 
-				if (not guardVarFound) { continue; }  // this statement doesn't contain guardVar
+				if (not usedVarLookup.contains(guardVarIdx)) { continue; }  // this statement doesn't contain guardVar
 
 				// For statements containing the guardVar, make copies for each split/branch
 				for (VarIdx branchVarIdx : branchVarIdxs) {
@@ -2705,28 +2727,48 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 					//chp::transition &defTransitionCopy = this->transitions[defTransitionCopyIt.index];
 
 					//chp::transition defTransitionCopy = defTransition;  //TODO(steven.kneiser): ayo???
-					if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }   // paranoid, I know
+					if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "ERROR: defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }   // paranoid, I know
 					chp::transition defTransitionCopy = this->transitions[defTransitionIdx];
 
 					defTransitionCopy.guard.applyVars(varRename);
+					set<VarIdx> assignedVars;
 					arithmetic::Choice &copyChoice = defTransitionCopy.action;
 					for (arithmetic::Parallel &term : copyChoice.terms) {
 						for (arithmetic::Action &action : term.actions) {
 							//TODO(steven.kneiser): is it possible to also have the guard var in the lvalue? DSA form should guarantee that doesn't happen
 							action.rvalue.applyVars(varRename);
+
+							//NOTE(steven.kneiser): assuming lvalue can only ever be a var
+							if (not action.lvalue.isUndef() and action.lvalue.top.type == arithmetic::Operand::Type::VAR) {
+								assignedVars.insert(action.lvalue.top.index);
+							}
 						}
 					}
-					this->insert_after(defTransitionIt, defTransitionCopy);
+					petri::iterator splitTransitionIt = this->insert_after(defTransitionIt, defTransitionCopy);
+
+					// Extend Use-Defs of other non-guard variables with new duplicates
+					TransitionIdx splitTransitionIdx = splitTransitionIt.index;
+					for (VarIdx defVarIdx : assignedVars) {
+						if (not this->useDefChains.contains(defVarIdx)) { internal("", "ERROR: " + std::to_string(defVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
+						useDefChain &chain = this->useDefChains[defVarIdx];
+
+						chain.defs.erase(defTransitionIdx);
+						chain.defs.insert(splitTransitionIdx);
+					}
+
+					for (VarIdx user : usedVarLookup) {
+						if (not this->useDefChains.contains(user)) { internal("", "ERROR: " + std::to_string(user) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
+						useDefChain &chain = this->useDefChains[user];
+
+						chain.uses.erase(defTransitionIdx);
+						chain.uses.insert(splitTransitionIdx);
+					}
 				}
 				this->pinch(defTransitionIt);
 			}
 		}
 
-
-		//TODO(steven.kneiser): now that we've identified & set the stage for projection, save these steps for when the time is right
-		//  then 2) insert copies of this entire block??? ...or save for detection later in projection (with some explicit "splitGuards" hook)
-		//  also 3) properly substitute/replace/rewrite rule with respective new guardVar copy
-		//  then 4) document this properly in ProjectionSets
+		//TODO(steven.kneiser): now just document this properly in ProjectionSets
 	}
 
 	clog << "rewrote each guard var used in multi-definition selections as a Copy Process." << endl;
@@ -2950,6 +2992,7 @@ void graph::rewriteAssignmentsAsChannels(
 		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
 	clog << "rewriting assignments as channels." << endl;
 
+	//TODO(steven.kneiser): index use counts for synchronizing between passes (e.g. lone-vars that technically get split into multi-use but effectively aren't)
 
 
 	//// if (debug) {} ??
@@ -2963,11 +3006,11 @@ void graph::rewriteAssignmentsAsChannels(
 
 
 
-
 	//TODO(steven.kneiser): wait, where are these getting cut now? Do we no longer cut them? No! Now we just instantiate subprocesses! Snip them from the codebase!
 	//set<VarIdx> _copiedVars;  //TODO(steven.kneiser): dedup guard splitting & copy-variables with shared todo set
 	//unordered_map<VarIdx, set<TransitionIdx>> copyProcesses; //copySets?
 	this->createCopyProcessForksForMultiUseVars();
+
 
 
 	//// if (debug) {} ??
@@ -2989,12 +3032,20 @@ void graph::rewriteAssignmentsAsChannels(
 
 
 
-
 	//NOTE(steven.kneiser): these guard vars, even though often not referenced or "used" directly in definition, are certainly "used" indirectly
 	//    ...to select the specific control-flow branches where that definition is executed
 	this->rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(invertedDependencySets, projectionSets);
 
 
+
+	//// if (debug) {} ??
+#ifdef GRAPHVIZ_SUPPORTED
+	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
+	//string prefix = "";
+	string cp2_analysis_filename = (debugDirPath / (prefix + this->name + "_analysis_cp2.png")).string();
+	string cp2_analysis_dot = chp::export_analysis(*this, true, true).to_string();
+	gvdot::render(cp2_analysis_filename, cp2_analysis_dot);
+#endif
 
 	//// if (debug) {} ??
 #ifdef GRAPHVIZ_SUPPORTED
@@ -3029,7 +3080,6 @@ void graph::rewriteAssignmentsAsChannels(
 
 	//TODO(steven.kneiser): these funcs would be cleaner if they surfaced the I/O decision of "okay now rewrite that one"
 	//    ...it seems much cleaner to have someone rewrite/change the assignment, then merely provide a func that accepts the name of the channel to rewrite that assignment as surface THAT policy decision.NNNBBB
-
 
 
 
@@ -3069,9 +3119,9 @@ void graph::rewriteAssignmentsAsChannels(
 		//this->pinch(outTransitionIt);
 
 
-		//TODO(steven.kneiser): RE-ENABLE: Rewrite Copy Process forks as channels
-		//VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~NEO_FORK_CHAN--");
-		//this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
+		// Rewrite Copy Process forks as channels
+		VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~NEO_FORK_CHAN--");
+		this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
 	}
 
 
