@@ -2646,6 +2646,9 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 			string guardVarName = this->vars[guardVarIdx].name;
 			cout << endl << ">/< guardVar to split: " << guardVarName << endl;
 
+			if (not this->useDefChains.contains(guardVarIdx)) { internal("", "ERROR: guardVar not found in this->useDefChains", __FILE__, __LINE__); continue; }
+			useDefChain &guardChain = this->useDefChains[guardVarIdx];
+
 			//// First, detect if guardVar already has a copyProcess we can build atop (any chance it's already been done?)
 			//// If not detected, create a new CopyProcess
 			//NOTE(steven.kneiser): no longer necessary w/ batched CopyProcs beforehand ...perhaps even if we migrate to createVarDefBranch API
@@ -2654,7 +2657,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 			// Per each definition (per guard),  ...
 			size_t guardSplitCount = 0;
-			unordered_map<VarIdx, VarIdx> branchVarIdxs;  // from pre-DSA var to pair(DSA var, localized var variant)
+			unordered_map<VarIdx, VarIdx> branchVarIdxs;  //TODO(steven.kneiser): what about an unordered_map from pre-DSA var to pair(DSA var, localized var variant) ... NOPE, no longer necessary
 			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
 				if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "ERROR: defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
 				chp::transition &defTransition = this->transitions[defTransitionIdx];
@@ -2771,25 +2774,28 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 						// Extend Use-Defs of other non-guard variables with new duplicates
 						TransitionIdx splitTransitionIdx = splitTransitionIt.index;
-						for (VarIdx defVarIdx : assignedVars) {
-							if (not this->useDefChains.contains(defVarIdx)) { internal("", "ERROR: " + std::to_string(defVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
-							useDefChain &chain = this->useDefChains[defVarIdx];
+						guardChain.uses.insert(splitTransitionIdx);
 
-							chain.defs.erase(defTransitionIdx);
-							chain.defs.insert(splitTransitionIdx);
-						}
+						//for (VarIdx defVarIdx : assignedVars) {
+						//	if (not this->useDefChains.contains(defVarIdx)) { internal("", "ERROR: " + std::to_string(defVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
+						//	useDefChain &chain = this->useDefChains[defVarIdx];
 
-						for (VarIdx useVarIdx : usedVarLookup) {
-							if (not this->useDefChains.contains(useVarIdx)) { internal("", "ERROR: " + std::to_string(useVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
-							useDefChain &chain = this->useDefChains[useVarIdx];
+						//	chain.defs.erase(defTransitionIdx);
+						//	chain.defs.insert(splitTransitionIdx);
+						//}
+						//
+						//for (VarIdx useVarIdx : usedVarLookup) {
+						//	if (not this->useDefChains.contains(useVarIdx)) { internal("", "ERROR: " + std::to_string(useVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
+						//	useDefChain &chain = this->useDefChains[useVarIdx];
 
-							chain.uses.erase(predicateTransitionIdx);
-							chain.uses.insert(splitTransitionIdx);
-						}
+						//	chain.uses.erase(predicateTransitionIdx);
+						//	chain.uses.insert(splitTransitionIdx);
+						//}
 					}
 
 					// Prune original predicate
 					this->pinch(predicateTransitionIt);
+					guardChain.uses.erase(predicateTransitionIdx);
 				}
 			}
 		}
@@ -2917,8 +2923,11 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 	petri::iterator forkDoubleDummyTailIt = forkDummyTailIts[0];
 
 	petri::iterator branchTransitionIt = this->insert_alongside(forkTransitionIt, forkDoubleDummyTailIt, branchTransition);
+	TransitionIdx branchTransitionIdx = branchTransitionIt.index;
 	//TODO(steven.kneiser): RETVRN HERE verify the transition indexes compared to what my iter labels here CLAIM
 	//  ...also why is my fork showing up AFTER 
+
+	sourceChain.defs.insert(branchTransitionIdx);
 
 
 	// -> FROM rewriteAsgnAsCopyProc
@@ -2932,7 +2941,7 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 
 		////petri::iterator branchIt = this->super::insert_alongside(forkTransitionIt, dummyTailIt, branchTransition);
 
-	return branchTransitionIt.index;
+	return branchTransitionIdx;
 }
 //TODO(steven.kneiser): aHA, we should return a petri::iterator or some other type that enables "invailidity" or more obvious null response to protect future travelers
 
@@ -3006,6 +3015,20 @@ void graph::createCopyProcessForksForMultiUseVars() {
 			//this->pinch(dummyTailIt);
 			this->pinch(defTransitionIt); //TODO(steven.kneiser): umm, why not just rename the lvar of defTransition?
 			//  ...ahh, this seperation might make it much easier to write the algorithm for R_5 -> R_6 of polymorphic input channels
+
+			chain.defs.insert(forkTransitionIt.index);
+			chain.defs.erase(defTransitionIdx);
+
+			//TODO(steven.kneiser): clean up this w/ earlier rexpr crawl
+			vector<VarIdx> usedVars = getVarsFromExpression(rexpr);
+			set<VarIdx> usedVarLookup(usedVars.begin(), usedVars.end());
+			for (VarIdx usedVarIdx : usedVarLookup) {
+				if (not this->useDefChains.contains(usedVarIdx)) { internal("", "ERROR: usedVarIdx not in this->useDefChains", __FILE__, __LINE__); continue; }
+				useDefChain &usedVarChain = this->useDefChains[usedVarIdx];
+
+				usedVarChain.uses.insert(forkTransitionIt.index);
+				usedVarChain.uses.erase(defTransitionIdx);
+			}
 		}
 	}
 
