@@ -219,7 +219,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void post_process(bool proper_nesting=false, bool aggressive=false);
 
 	struct controlFlowBlock {
-		BlockIdx uid;
+		BlockIdx uid;  //TODO(steven.kneiser): s/uid/blockIdx
 		bool reset = false;
 		vector<petri::iterator> transitions;
 

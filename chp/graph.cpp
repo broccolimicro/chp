@@ -2025,7 +2025,8 @@ void graph::remapVarInTransition(VarIdx from, VarIdx to, TransitionIdx transitio
 //  ...meh, I actually like the usability of the name "inAllTransitions" too.
 //  Ideally, we make the atomic "remap-in-1-Transition()" more surgical/composable/extensible, that we encapsulate remappings with that helper.
 //  I like the thought of separate InAllTransitions() & some sort of "InTransitionsByUseDef()"
-//TODO(steven.kneiser): "substituteVarInTransitions()" a more intuitive name>
+//TODO(steven.kneiser): make bool
+//TODO(steven.kneiser): "bool substituteVarInTransitions()" a more intuitive name>
 //TODO(steven.kneiser): remake as a light wrapper around some more atomic "remapVarInTransition()"
 void graph::remapVarInEachTransition(VarIdx from, VarIdx to, bool rewriteDefinitions, bool rewriteUses) {  //bool rewriteGuard, bool rewriteLexprs, bool rewriteRexprs
 	clog << "rewriting var." << endl;
@@ -2034,21 +2035,20 @@ void graph::remapVarInEachTransition(VarIdx from, VarIdx to, bool rewriteDefinit
 	if (  to >= this->vars.size()) { clog << "  'to' var @" <<   to << " is out-of-range for this->vars: " << this->vars.size() << endl; return; }
 	clog << "  from `" << this->vars[from].name << "` to `" << this->vars[to].name << "`" << endl;
 
-	if (not this->useDefChainsReady) { this->computeUseDefChains(); }
+	if (not this->useDefChainsReady) { this->computeUseDefChains(); }  //TODO(steven.kneiser): perhaps this check should be done more often (only when I start invalidating the Ready flag & doing recomputations
 	if (not this->useDefChains.contains(from)) { clog << "'from' var @" << from << " -> `" << this->vars[from].name << "` not found in this->useDefChains" << endl; return; }
-	const useDefChain &useDefChain = this->useDefChains[from];
-	//TODO(steven.kneiser): not necessarry, but might we ever want to explore the `to` useDefChain?
+	const useDefChain &chain = this->useDefChains[from];
 
-	// Substitute `to` for `from`
+	// s/from/to -- Substitute `to` for `from`
 	set<TransitionIdx> transitionsToRewrite;
-	//if (useDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd/used input-channel
-	if (rewriteDefinitions) { transitionsToRewrite.insert(useDefChain.defs.begin(), useDefChain.defs.end()); }
-	//if (useDefChain.uses.empty()) { continue; }
-	if (rewriteUses) { transitionsToRewrite.insert(useDefChain.uses.begin(), useDefChain.uses.end()); }
+	//if (chain.defs.empty()) { continue; }  // no definition when dependency is a recv'd/used input-channel
+	if (rewriteDefinitions) { transitionsToRewrite.insert(chain.defs.begin(), chain.defs.end()); }
+	//if (chain.uses.empty()) { continue; }
+	if (rewriteUses) { transitionsToRewrite.insert(chain.uses.begin(), chain.uses.end()); }
 	if (transitionsToRewrite.empty()) { return; }
 
-	Mapping<VarIdx> varSubstitution(std::numeric_limits<VarIdx>::max(), true);
-	varSubstitution.set(from, to);
+	//Mapping<VarIdx> varSubstitution(std::numeric_limits<VarIdx>::max(), true);
+	//varSubstitution.set(from, to);
 
 	//TODO(steven.kneiser): Update ProjectionSets too! Oh crap, will there be any only-partial updates due to def vs use rewrites?
 	//set<ProjectionItem> &p = projectionSets[user];
@@ -2169,6 +2169,7 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 	}
 
 	this->pinch(transitionIt);  // Remove the original assignment
+	//this->pinch(dummyTailIt);  //TODO(steven.kneiser): preserve legibility without this & save it for graph reducers?
 
 	clog << "rewrote assignment as channel." << endl;
 }
@@ -2653,7 +2654,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 			// Per each definition (per guard),  ...
 			size_t guardSplitCount = 0;
-			vector<VarIdx> branchVarIdxs;
+			unordered_map<VarIdx, VarIdx> branchVarIdxs;  // from pre-DSA var to pair(DSA var, localized var variant)
 			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
 				if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "ERROR: defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
 				chp::transition &defTransition = this->transitions[defTransitionIdx];
@@ -2679,7 +2680,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 				//TODO(steven.kneiser): ugh, swap the name orderings (& idx vs name orientation)
 				VarIdx newBranchVarIdx = this->getEnumeratedVar(guardVarIdx, guardSplitCount, "~gsplit-" + localDefVarName + "~");  //TODO: study other naming examples
-				branchVarIdxs.push_back(newBranchVarIdx);
+				branchVarIdxs[newBranchVarIdx] = localDefVarIdx;  //{ ??? , localDefVarIdx};
 				cout << " ==>  " << this->vars[newBranchVarIdx].name << "  @ " << newBranchVarIdx << endl;
 
 				//TransitionIdx branchTransitionIdx = this->createVarDefBranch(localDefVarIdx, newBranchVarIdx, defTransitionIdx);
@@ -2703,7 +2704,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
 				petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
 				if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "ERROR: defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
-				const chp::transition &defTransition = this->transitions[defTransitionIdx];
+				chp::transition &defTransition = this->transitions[defTransitionIdx];
 
 				// Does this statement contain the guardVar we need to split?
 				vector<VarIdx> usedGuardVars = getVarsFromExpression(defTransition.guard);
@@ -2720,54 +2721,76 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 				if (not usedVarLookup.contains(guardVarIdx)) { continue; }  // this statement doesn't contain guardVar
 
-				// For statements containing the guardVar, make copies for each split/branch
-				for (VarIdx branchVarIdx : branchVarIdxs) {
-					Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
-					varRename.set(guardVarIdx, branchVarIdx);
+				// For each predicate in this block,
+				for (BlockIdx outBlockIdx : block.outs) {
+					if (outBlockIdx >= this->controlFlowGraph.size()) { internal("", "ERROR: outBlockIdx is out-of-bounds", __FILE__, __LINE__); continue; }
+					controlFlowBlock &outBlock = this->controlFlowGraph[outBlockIdx];
 
-					//petri::iterator defTransitionCopyIt = this->copy(defTransitionIt);
-					//if (not this->transitions.is_valid(defTransitionCopyIt.index)) { internal("", "defTransitionCopyIt.index isn't valid", __FILE__, __LINE__); continue; }
-					//chp::transition &defTransitionCopy = this->transitions[defTransitionCopyIt.index];
+					if (outBlock.transitions.empty()) { internal("", "ERROR: outBlock.transitions is empty", __FILE__, __LINE__); continue; }
+					petri::iterator predicateTransitionIt = outBlock.transitions[0];
+					TransitionIdx predicateTransitionIdx = predicateTransitionIt.index;
 
-					//chp::transition defTransitionCopy = defTransition;  //TODO(steven.kneiser): ayo???
-					if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "ERROR: defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }   // paranoid, I know
-					chp::transition defTransitionCopy = this->transitions[defTransitionIdx];
+					if (not this->transitions.is_valid(predicateTransitionIdx)) { internal("", "ERROR: predicateTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
+					chp::transition &predicateTransition = this->transitions[predicateTransitionIdx];
 
-					defTransitionCopy.guard.applyVars(varRename);
-					set<VarIdx> assignedVars;
-					arithmetic::Choice &copyChoice = defTransitionCopy.action;
-					for (arithmetic::Parallel &term : copyChoice.terms) {
-						for (arithmetic::Action &action : term.actions) {
-							//TODO(steven.kneiser): is it possible to also have the guard var in the lvalue? DSA form should guarantee that doesn't happen
-							action.rvalue.applyVars(varRename);
+					//TODO(steven.kneiser): rename predicate
 
-							//NOTE(steven.kneiser): assuming lvalue can only ever be a var
-							if (not action.lvalue.isUndef() and action.lvalue.top.type == arithmetic::Operand::Type::VAR) {
-								assignedVars.insert(action.lvalue.top.index);
+					// For predicates containing the guardVar, make copies for each split/branch
+					for (auto &[branchVarIdx, localDefVarIdx] : branchVarIdxs) {
+						Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
+						varRename.set(guardVarIdx, branchVarIdx);
+
+						// If guard var is used in block assignments, rename guard usage to appropriate split/branch
+						//if (not this->transitions.is_valid(defTransitionIt.index)) { internal("", "defTransitionCopyIt.index isn't valid", __FILE__, __LINE__); continue; }  //TODO(steven.kneiser): redundant, but ok since paranoid about future dev
+						//chp::transition &defTransition = this->transitions[defTransitionIt.index];
+						defTransition.action.applyVars(varRename);
+
+
+
+						// Make copies of predicate for each split/branch
+						if (not this->transitions.is_valid(predicateTransitionIdx)) { internal("", "ERROR: predicateTransitionIdx isn't valid", __FILE__, __LINE__); continue; }   // paranoid, I know
+						chp::transition predicateTransitionCopy = this->transitions[predicateTransitionIdx];
+
+						predicateTransitionCopy.guard.applyVars(varRename);
+						set<VarIdx> assignedVars;
+						arithmetic::Choice &copyChoice = predicateTransitionCopy.action;
+						for (arithmetic::Parallel &term : copyChoice.terms) {
+							for (arithmetic::Action &action : term.actions) {
+								//TODO(steven.kneiser): is it possible to also have the guard var in the lvalue? DSA form should guarantee that doesn't happen
+								action.rvalue.applyVars(varRename);
+
+								//NOTE(steven.kneiser): assuming lvalue can only ever be a var
+								if (not action.lvalue.isUndef() and action.lvalue.top.type == arithmetic::Operand::Type::VAR) {
+									assignedVars.insert(action.lvalue.top.index);
+								}
 							}
 						}
+						//if (localDefVarIdx == ) {
+							petri::iterator splitTransitionIt = this->insert_after(predicateTransitionIt, predicateTransitionCopy);
+						//}
+
+						// Extend Use-Defs of other non-guard variables with new duplicates
+						TransitionIdx splitTransitionIdx = splitTransitionIt.index;
+						for (VarIdx defVarIdx : assignedVars) {
+							if (not this->useDefChains.contains(defVarIdx)) { internal("", "ERROR: " + std::to_string(defVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
+							useDefChain &chain = this->useDefChains[defVarIdx];
+
+							chain.defs.erase(defTransitionIdx);
+							chain.defs.insert(splitTransitionIdx);
+						}
+
+						for (VarIdx useVarIdx : usedVarLookup) {
+							if (not this->useDefChains.contains(useVarIdx)) { internal("", "ERROR: " + std::to_string(useVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
+							useDefChain &chain = this->useDefChains[useVarIdx];
+
+							chain.uses.erase(predicateTransitionIdx);
+							chain.uses.insert(splitTransitionIdx);
+						}
 					}
-					petri::iterator splitTransitionIt = this->insert_after(defTransitionIt, defTransitionCopy);
 
-					// Extend Use-Defs of other non-guard variables with new duplicates
-					TransitionIdx splitTransitionIdx = splitTransitionIt.index;
-					for (VarIdx defVarIdx : assignedVars) {
-						if (not this->useDefChains.contains(defVarIdx)) { internal("", "ERROR: " + std::to_string(defVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
-						useDefChain &chain = this->useDefChains[defVarIdx];
-
-						chain.defs.erase(defTransitionIdx);
-						chain.defs.insert(splitTransitionIdx);
-					}
-
-					for (VarIdx useVarIdx : usedVarLookup) {
-						if (not this->useDefChains.contains(useVarIdx)) { internal("", "ERROR: " + std::to_string(useVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
-						useDefChain &chain = this->useDefChains[useVarIdx];
-
-						chain.uses.erase(defTransitionIdx);
-						chain.uses.insert(splitTransitionIdx);
-					}
+					// Prune original predicate
+					this->pinch(predicateTransitionIt);
 				}
-				this->pinch(defTransitionIt);
 			}
 		}
 
@@ -3124,13 +3147,15 @@ void graph::rewriteAssignmentsAsChannels(
 		//} //TODO(steven.kneiser): cover silent failure where this Copy Process ended up never creating a single branch:   else {}
 
 
-		// Rewrite Copy Process forks as channels
+		// Prune Copy Process umbilical cord
+		this->erase(outPlaceIt);
+
+		// Rewrite Copy Process forks as channel
 		VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~NEO_FORK_CHAN--");
 		this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
 
-		// Prune Copy Process umbilical cord AND dummy tail
-		this->erase(outPlaceIt);
-		this->pinch(copyProcessDummyTailIt); //TODO(steven.kneiser): don't prune for legibility? Wouldn't this be pruned by any petri reduce()?
+		// Prune Copy Process dummy tail
+		//this->pinch(copyProcessDummyTailIt); //TODO(steven.kneiser): don't prune for legibility? Wouldn't this be pruned by any petri reduce()?
 	}
 
 
@@ -3162,6 +3187,19 @@ void graph::rewriteAssignmentsAsChannels(
 	string mid5_filename = (debugDirPath / (prefix + this->name + "_analysis_mid5.png")).string();
 	string mid5_dot = chp::export_graph(*this, true, false).to_string();
 	gvdot::render(mid5_filename, mid5_dot);
+#endif
+
+
+	this->reduce(true, true, true);
+
+
+	//// if (debug) {} ??
+#ifdef GRAPHVIZ_SUPPORTED
+	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
+	//string prefix = "";
+	string mid6_filename = (debugDirPath / (prefix + this->name + "_analysis_mid6.png")).string();
+	string mid6_dot = chp::export_graph(*this, true, false).to_string();
+	gvdot::render(mid6_filename, mid6_dot);
 #endif
 
 
