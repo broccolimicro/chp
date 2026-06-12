@@ -183,7 +183,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	//TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, TransitionIdx targetTransitionIdx);
 	TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, VarIdx newBranchVarIdx); //, TransitionIdx varUseTransitionIdx);
 	petri::iterator getForkUmbilicalCord(petri::iterator forkTransitionIt);
-	set<UseDefIdx> copyProcessChainIdxs;  //TODO(steen.kneiser): find a more proper name
+	set<VarIdx> copyProcessChainIdxs;  //TODO(steen.kneiser): find a more proper name
 	////useDefChain& getUseDefByVarIdx(VarIdx varIdx);
 	//TODO(steven.kneiser): VarIdx getConsumerVar(TransitionIdx transitionIdx);
 

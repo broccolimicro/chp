@@ -2641,7 +2641,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 		//  now 1) each of these outGuards now need a copy process
 		for (VarIdx guardVarIdx : allOutGuardVars) {
-			if (guardVarIdx >= this->vars.size()) { clog << "ERROR: var at index " << guardVarIdx << "is not in this->vars. Skipping." << endl; continue; }
+			if (guardVarIdx >= this->vars.size()) { internal("", "ERROR: var is out-of-bounds", __FILE__, __LINE__); continue; }
 			string guardVarName = this->vars[guardVarIdx].name;
 			cout << endl << ">/< guardVar to split: " << guardVarName << endl;
 
@@ -2655,7 +2655,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 			size_t guardSplitCount = 0;
 			vector<VarIdx> branchVarIdxs;
 			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
-				if (not this->transitions.is_valid(defTransitionIdx)) { cerr << "ERROR: defTransitionIdx @ T" << defTransitionIdx << " isn't valid. Skipping ahead." << endl; continue; }
+				if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "ERROR: defTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
 				chp::transition &defTransition = this->transitions[defTransitionIdx];
 
 				// Per definition inside branch, create branch of guardVar (the literal split)
@@ -2674,7 +2674,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 					//break;?
 				}
 
-				if (localDefVarIdx >= this->vars.size()) { clog << "ERROR: var at index " << localDefVarIdx << "is not in this->vars. Skipping." << endl; continue; }
+				if (localDefVarIdx >= this->vars.size()) { internal("", "ERROR: var is out-of-bounds", __FILE__, __LINE__); continue; }
 				string localDefVarName = this->vars[localDefVarIdx].name;
 
 				//TODO(steven.kneiser): ugh, swap the name orderings (& idx vs name orientation)
@@ -2693,8 +2693,11 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 				guardSplitCount++;
 			}
 
+			// 3a) rename guardVars in predicates
+			//TODO(steven.kneiser): create Mapping from var -> expr(union of vars) AND expr(!var) -> expr(conjunction of not-vars)
 
-			// 3) split transitions containing guardVar w/ new branches of guardVar
+
+			// 3b) split transitions containing guardVar w/ new branches of guardVar
 			//NOTE(steven.kneiser): we need an exhaustive branchVarIdxs before we retrace our steps to introduce splits
 			//NOTE(steven.kneiser): how might we approach this differently if we didn't exhaustively decompose, but only split as-needed?
 			for (auto &[defTransitionIdx, defVarIdx] : outGens) {
@@ -2756,9 +2759,9 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 						chain.defs.insert(splitTransitionIdx);
 					}
 
-					for (VarIdx user : usedVarLookup) {
-						if (not this->useDefChains.contains(user)) { internal("", "ERROR: " + std::to_string(user) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
-						useDefChain &chain = this->useDefChains[user];
+					for (VarIdx useVarIdx : usedVarLookup) {
+						if (not this->useDefChains.contains(useVarIdx)) { internal("", "ERROR: " + std::to_string(useVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
+						useDefChain &chain = this->useDefChains[useVarIdx];
 
 						chain.uses.erase(defTransitionIdx);
 						chain.uses.insert(splitTransitionIdx);
@@ -3074,12 +3077,61 @@ void graph::rewriteAssignmentsAsChannels(
 
 
 
-	// NOTE(steven.kneiser): we intentionally convert all multi-use vars before any single-use vars
-	//TODO(steven.kneiser): perf optimize these mutually-exclusive subsets from 2 for-loops to 1
-	this->rewriteEachSingleUseVarAsDirectChannel(invertedDependencySets, projectionSets);
+	// Rewrite the base fork of Copy Processes as a Channel communication,
+	//   now that branches/arms have been attached & converted to Channels as well
+	for (VarIdx copyProcessChainIdx : this->copyProcessChainIdxs) {  //TODO(steven.kneiser): verify we this value is now properly a UseDefIdx, not a hacky VarIdx (from before this->useDefs migration)
+		if (not this->useDefChains.contains(copyProcessChainIdx)) { clog << "useDefChain not found at index " << copyProcessChainIdx << ". Unable to rewrite base fork as Channel communication" << endl; continue; }  //TODO(steven.kneiser): migrate to newer this->useDefs
+		const useDefChain &chain = this->useDefChains[copyProcessChainIdx];
 
-	//TODO(steven.kneiser): these funcs would be cleaner if they surfaced the I/O decision of "okay now rewrite that one"
-	//    ...it seems much cleaner to have someone rewrite/change the assignment, then merely provide a func that accepts the name of the channel to rewrite that assignment as surface THAT policy decision.NNNBBB
+		if (not chain.hasCopyProcess()) { continue; }  //NOTE(steven.kneiser): redundant, but safe & exmple for future best-practice
+		TransitionIdx forkTransitionIdx = chain.copyProcess;
+		petri::iterator forkTransitionIt(petri::transition::type, forkTransitionIdx);
+
+		//NOTE(steven.kneiser): we finished using this scaffolding, designed for cleaner fork branching (especially when debugging multiple rewrite steps)
+		//  ...this assumes our forkTransition (the base of the Copy Process) only has one out-place connecting directly to the dummy skip-transition, pointed to by every branchTransition
+		//VarIdx varForIdx = chain.varIdx;
+		//if (chain.defs.empty()) { error("", "chain is empty", __FILE__, __LINE__); continue; }
+		//TransitionIdx forkTransitionIdx = *chain.defs.begin();
+		//vector<petri::iterator> outPlaceIts = this->next(forkTransitionIt);
+		//if (outPlacesIts.empty()) { cerr << "ERROR: no petri::next() children for forkTransition at index " << forkTransitionIdx << ". No graceful failure." << endl; return 0; }
+		petri::iterator outPlaceIt = this->getForkUmbilicalCord(forkTransitionIt);
+		if (not outPlaceIt.valid()) { internal("", "no Copy Process umbilical cord found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
+		vector<petri::iterator> outTransitionIts = this->next(outPlaceIt);
+		if (outTransitionIts.empty()) { internal("", "no Copy Process dummy tail found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
+		petri::iterator copyProcessDummyTailIt = outTransitionIts[0];
+
+		size_t branchCount = 0;
+		vector<petri::iterator> branchPlaceIts = this->next(forkTransitionIt);
+		for (petri::iterator branchPlaceIt : branchPlaceIts) {
+
+			vector<petri::iterator> branchTransitionIts = this->next(branchPlaceIt);
+			for (petri::iterator branchTransitionIt : branchTransitionIts) {
+
+				VarIdx branchChannelIdx = this->getEnumeratedVar(chain.varIdx, branchCount, "~BRANCH_CHAN~");
+				this->rewriteAssignmentAsChannel(branchTransitionIt.index, branchChannelIdx);
+			}
+			branchCount++;
+		}
+
+		// Prune dummy tail
+		//if (branchCount > 0) {
+		//	vector<petri::iterator> outTransitionIts = this->next(outPlaceIt);
+		//	if (outTransitionIts.empty()) { internal("", "no Copy Process dummy tail found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
+		//	petri::iterator copyProcessDummyTailIt = outTransitionIts[0];
+		//	this->pinch(copyProcessDummyTailIt);
+
+		//	vector<petri::iterator> outTransitionIts = this->next(outPlaceIt);
+		//} //TODO(steven.kneiser): cover silent failure where this Copy Process ended up never creating a single branch:   else {}
+
+
+		// Rewrite Copy Process forks as channels
+		VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~NEO_FORK_CHAN--");
+		this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
+
+		// Prune Copy Process umbilical cord AND dummy tail
+		this->erase(outPlaceIt);
+		this->pinch(copyProcessDummyTailIt); //TODO(steven.kneiser): don't prune for legibility? Wouldn't this be pruned by any petri reduce()?
+	}
 
 
 
@@ -3094,35 +3146,12 @@ void graph::rewriteAssignmentsAsChannels(
 
 
 
-	// Rewrite the base fork of Copy Processes as a Channel communication,
-	//   now that branches/arms have been attached & converted to Channels as well
-	for (UseDefIdx copyProcessChainIdx : this->copyProcessChainIdxs) {  //TODO(steven.kneiser): verify we this value is now properly a UseDefIdx, not a hacky VarIdx (from before this->useDefs migration)
-		if (not this->useDefChains.contains(copyProcessChainIdx)) { clog << "useDefChain not found at index " << copyProcessChainIdx << ". Unable to rewrite base fork as Channel communication" << endl; continue; }  //TODO(steven.kneiser): migrate to newer this->useDefs
-		const useDefChain &chain = this->useDefChains[copyProcessChainIdx];
+	// NOTE(steven.kneiser): we intentionally convert all multi-use vars before any single-use vars
+	//TODO(steven.kneiser): perf optimize these mutually-exclusive subsets from 2 for-loops to 1
+	this->rewriteEachSingleUseVarAsDirectChannel(invertedDependencySets, projectionSets);
 
-		if (not chain.hasCopyProcess()) { continue; }  //NOTE(steven.kneiser): redundant, but safe & exmple for future best-practice
-
-		// Prune dummy tail
-		//NOTE(steven.kneiser): we finished using this scaffolding, designed for cleaner fork branching (especially when debugging multiple rewrite steps)
-		//  ...this assumes our forkTransition (the base of the Copy Process) only has one out-place connecting directly to the dummy skip-transition, pointed to by every branchTransition
-		//VarIdx varForIdx = chain.varIdx;
-		if (chain.defs.empty()) { error("", "chain is empty", __FILE__, __LINE__); continue; }
-		TransitionIdx forkTransitionIdx = *chain.defs.begin();
-		petri::iterator forkTransitionIt(petri::transition::type, forkTransitionIdx);
-		//vector<petri::iterator> outPlaceIts = this->next(forkTransitionIt);
-		//if (outPlacesIts.empty()) { cerr << "ERROR: no petri::next() children for forkTransition at index " << forkTransitionIdx << ". No graceful failure." << endl; return 0; }
-
-
-		petri::iterator outPlaceIt = this->getForkUmbilicalCord(forkTransitionIt);
-		if (not outPlaceIt.valid()) { internal("", "no Copy Process umbilical cord found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
-		this->erase(outPlaceIt);
-		//this->pinch(outTransitionIt);
-
-
-		// Rewrite Copy Process forks as channels
-		VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~NEO_FORK_CHAN--");
-		this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
-	}
+	//TODO(steven.kneiser): these funcs would be cleaner if they surfaced the I/O decision of "okay now rewrite that one"
+	//    ...it seems much cleaner to have someone rewrite/change the assignment, then merely provide a func that accepts the name of the channel to rewrite that assignment as surface THAT policy decision.NNNBBB
 
 
 
