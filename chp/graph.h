@@ -295,6 +295,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	void renderReset();
 
 	Mapping <VarIdx> varVariants;  //TODO(steven.kneiser): IDEA: for mapping all deprecating/older var variants to latest (as are still live in graph + Use-Defs)
+	void printAnalysis(string caption="");
 };
 
 vector<VarIdx> getVarsFromExpression(const arithmetic::Expression &e);

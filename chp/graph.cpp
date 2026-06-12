@@ -3036,23 +3036,34 @@ void graph::createCopyProcessForksForMultiUseVars() {
 }
 
 
+size_t ANALYSIS_SNAPSHOT_COUNT = 0;
+
+void graph::printAnalysis(string caption) {
+#ifdef GRAPHVIZ_SUPPORTED
+	std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
+	string prefix = "";
+	string cfg_filename = (debugDirPath / (prefix + this->name + "_analysis_cfg" + std::to_string(ANALYSIS_SNAPSHOT_COUNT) + ".png")).string();
+	string cfg_dot = chp::export_graph(*this, true, false).to_string();
+	gvdot::render(cfg_filename, cfg_dot);
+
+	string ud_filename = (debugDirPath / (prefix + this->name + "_analysis_ud" + std::to_string(ANALYSIS_SNAPSHOT_COUNT) + ".png")).string();
+	string ud_dot = chp::export_analysis(*this, true, true).to_string();
+	gvdot::render(ud_filename, ud_dot);
+#endif
+	ANALYSIS_SNAPSHOT_COUNT++;
+}
+
+
 void graph::rewriteAssignmentsAsChannels(
 		const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
 		unordered_map<VarIdx, set<ProjectionItem>> &projectionSets) {
 	clog << "rewriting assignments as channels." << endl;
 
-	//TODO(steven.kneiser): index use counts for synchronizing between passes (e.g. lone-vars that technically get split into multi-use but effectively aren't)
+	//TODO(steven.kneiser): index use counts? for synchronizing between passes (e.g. lone-vars that technically get split into multi-use but effectively aren't) ...nah.
 
 
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	string prefix = "";
-	string mid0_filename = (debugDirPath / (prefix + this->name + "_analysis_mid0.png")).string();
-	string mid0_dot = chp::export_graph(*this, true, false).to_string();
-	gvdot::render(mid0_filename, mid0_dot);
-#endif
-
+	//TODO(steven.kneiser): if (debug) {} ??
+	this->printAnalysis("0");
 
 
 	//TODO(steven.kneiser): wait, where are these getting cut now? Do we no longer cut them? No! Now we just instantiate subprocesses! Snip them from the codebase!
@@ -3061,24 +3072,7 @@ void graph::rewriteAssignmentsAsChannels(
 	this->createCopyProcessForksForMultiUseVars();
 
 
-
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string cp_analysis_filename = (debugDirPath / (prefix + this->name + "_analysis_cp.png")).string();
-	string cp_analysis_dot = chp::export_analysis(*this, true, true).to_string();
-	gvdot::render(cp_analysis_filename, cp_analysis_dot);
-#endif
-
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string mid1_filename = (debugDirPath / (prefix + this->name + "_analysis_mid1.png")).string();
-	string mid1_dot = chp::export_graph(*this, true, false).to_string();
-	gvdot::render(mid1_filename, mid1_dot);
-#endif
-
+	this->printAnalysis("1");
 
 
 	//NOTE(steven.kneiser): these guard vars, even though often not referenced or "used" directly in definition, are certainly "used" indirectly
@@ -3086,41 +3080,14 @@ void graph::rewriteAssignmentsAsChannels(
 	this->rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(invertedDependencySets, projectionSets);
 
 
-
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string cp2_analysis_filename = (debugDirPath / (prefix + this->name + "_analysis_cp2.png")).string();
-	string cp2_analysis_dot = chp::export_analysis(*this, true, true).to_string();
-	gvdot::render(cp2_analysis_filename, cp2_analysis_dot);
-#endif
-
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string mid2_filename = (debugDirPath / (prefix + this->name + "_analysis_mid2.png")).string();
-	string mid2_dot = chp::export_graph(*this, true, false).to_string();
-	gvdot::render(mid2_filename, mid2_dot);
-#endif
-
+	this->printAnalysis("2");
 
 
 	//TODO(steven.kneiser): ugh, what's the right way to deduplicate the copy processes from these seperate methods? How should these be pre-merged?
 	this->rewriteEachMultiUseVarAsCopyProcess(invertedDependencySets, projectionSets);
 
 
-
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string mid3_filename = (debugDirPath / (prefix + this->name + "_analysis_mid3.png")).string();
-	string mid3_dot = chp::export_graph(*this, true, false).to_string();
-	gvdot::render(mid3_filename, mid3_dot);
-#endif
-
+	this->printAnalysis("3");
 
 
 	// Rewrite the base fork of Copy Processes as a Channel communication,
@@ -3182,16 +3149,7 @@ void graph::rewriteAssignmentsAsChannels(
 	}
 
 
-
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string mid4_filename = (debugDirPath / (prefix + this->name + "_analysis_mid4.png")).string();
-	string mid4_dot = chp::export_graph(*this, true, false).to_string();
-	gvdot::render(mid4_filename, mid4_dot);
-#endif
-
+	this->printAnalysis("4");
 
 
 	// NOTE(steven.kneiser): we intentionally convert all multi-use vars before any single-use vars
@@ -3202,29 +3160,13 @@ void graph::rewriteAssignmentsAsChannels(
 	//    ...it seems much cleaner to have someone rewrite/change the assignment, then merely provide a func that accepts the name of the channel to rewrite that assignment as surface THAT policy decision.NNNBBB
 
 
-
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string mid5_filename = (debugDirPath / (prefix + this->name + "_analysis_mid5.png")).string();
-	string mid5_dot = chp::export_graph(*this, true, false).to_string();
-	gvdot::render(mid5_filename, mid5_dot);
-#endif
+	this->printAnalysis("5");
 
 
 	this->reduce(true, true, true);
 
 
-	//// if (debug) {} ??
-#ifdef GRAPHVIZ_SUPPORTED
-	//std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
-	//string prefix = "";
-	string mid6_filename = (debugDirPath / (prefix + this->name + "_analysis_mid6.png")).string();
-	string mid6_dot = chp::export_graph(*this, true, false).to_string();
-	gvdot::render(mid6_filename, mid6_dot);
-#endif
-
+	this->printAnalysis("6");
 
 
 	clog << "rewrote assignments as channels." << endl;
