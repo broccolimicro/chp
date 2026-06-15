@@ -178,7 +178,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 	unordered_map<VarIdx, useDefChain> useDefChains;  //TODO(steven.kneiser): as a migration step, migrate to Mapping<VarIdx, UseDefIdx>?? meh, just go straight there
 	//TODO(steven.kneiser): vector<useDefChain> now sufficient? ...once we abstract other internal structs to analysis.h
 	UseDefIdx getCopyProcess(VarIdx varIdx);
-	void createCopyProcessForksForMultiUseVars();
+	void createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);
 	TransitionIdx createVarDefFork(VarIdx sourceVarIdx);
 	//TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, TransitionIdx targetTransitionIdx);
 	TransitionIdx createVarDefBranch(VarIdx sourceVarIdx, VarIdx newBranchVarIdx); //, TransitionIdx varUseTransitionIdx);
@@ -267,7 +267,7 @@ struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::stat
 
 	//TODO(steven.kneiser): ideal API: just pass DSA'd VarIdx & let these helpers search & identify the defining definition
 	void rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx channelIdx);
-	void rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx defTransitionIdx);  //const set<VarIdx> &uses
+	void rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx defTransitionIdx, unordered_map<VarIdx, set<ProjectionItem>> &projectionSets);  //const set<VarIdx> &uses
 
 	void rewriteEachSingleUseVarAsDirectChannel(
 			const unordered_map<VarIdx, set<VarIdx>> &invertedDependencySets,
