@@ -12,6 +12,7 @@
 //TODO(steven.kneiser): delete after development
 #include <algorithm>
 #include <filesystem>
+#include <regex>
 #include <interpret_arithmetic/export.h>
 #include <interpret_chp/export_dot.h>
 #include "../tests/dot.h"
@@ -2823,6 +2824,9 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 					// For predicates containing the guardVar, make copies for each split/branch
 					for (auto &[branchVarIdx, localDefVarIdx] : branchVarIdxs) {
+						if (not this->useDefChains.contains(branchVarIdx)) { internal("", "ERROR: branchVarIdx not found in this->useDefChains", __FILE__, __LINE__); continue; }
+						useDefChain &branchChain = this->useDefChains[branchVarIdx];
+
 						Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
 						varRename.set(guardVarIdx, branchVarIdx);
 
@@ -2856,8 +2860,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 						//}
 
 						// Extend Use-Defs of other non-guard variables with new duplicates
-						TransitionIdx splitTransitionIdx = splitTransitionIt.index;
-						guardChain.uses.insert(splitTransitionIdx);
+						branchChain.uses.insert(splitTransitionIdx);
 
 						//for (VarIdx assignedVar : assignedVars) {
 							//	if (not this->useDefChains.contains(assignedVar)) { internal("", "ERROR: " + std::to_string(assignedVar) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
@@ -2866,6 +2869,14 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 							//	chain.defs.erase(defTransitionIdx);
 							//	chain.defs.insert(splitTransitionIdx);
 						//}
+
+						//TODO(steven.kneiser): perf optimization: LAZY! Make a proper DSA-canonicalizer
+						string defVarName = this->vars[defVarIdx].name;
+						string localDefVarName = this->vars[localDefVarIdx].name;
+						if (std::regex_match(localDefVarName, std::regex("^" + defVarName + "_\\d+$"))) {  // defVarIdx == localDefVarIdx
+							branchChain.uses.insert(defTransitionIdx);
+							guardChain.uses.erase(defTransitionIdx);
+						}
 						//
 						//for (VarIdx useVarIdx : usedVarLookup) {
 						//	if (not this->useDefChains.contains(useVarIdx)) { internal("", "ERROR: " + std::to_string(useVarIdx) + " isn't in this->useDefChains", __FILE__, __LINE__); continue; }
@@ -2963,9 +2974,8 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 	VarIdx varForkIdx = this->getEnumeratedVar(sourceVarIdx, 0, "~fork--");
 	if (varForkIdx >= this->vars.size()) { cerr << "ERROR: varForkIdx @ " << varForkIdx << " doesn't exist in this->vars. No graceful failure." << endl; return 0; }
 
-
-
-
+	if (not this->useDefChains.contains(varForkIdx)) { internal("", "ERROR: varForkIdx not in this->useDefChains", __FILE__, __LINE__); return 0; }
+	useDefChain &forkChain = this->useDefChains[varForkIdx];
 
 
 	//// 2) Create branch transition atop sourceVar's CopyProcess fork transition
@@ -3008,7 +3018,18 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 	//TODO(steven.kneiser): RETVRN HERE verify the transition indexes compared to what my iter labels here CLAIM
 	//  ...also why is my fork showing up AFTER 
 
-	sourceChain.defs.insert(branchTransitionIdx);
+
+	// Create new Use-Def for var branch
+	useDefChain branchChain;
+	branchChain.varIdx = branchVarIdx;
+	if (branchVarIdx >= this->vars.size()) { internal("", "ERROR: branchVarIdx out-of-bounds", __FILE__, __LINE__); return 0; }
+	branchChain.name = this->vars[branchVarIdx].name;
+	branchChain.defs = {branchTransitionIdx};
+	this->useDefChains[branchVarIdx] = branchChain;
+
+	forkChain.uses.insert(branchTransitionIdx);
+	branchChain.defs.insert(branchTransitionIdx);
+	//sourceChain.defs.erase(defTransitionIdx);
 
 
 	// -> FROM rewriteAsgnAsCopyProc
@@ -3098,9 +3119,13 @@ void graph::createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<Proj
 		this->pinch(defTransitionIt); //TODO(steven.kneiser): umm, why not just rename the lvar of defTransition?
 																	//  ...ahh, this seperation might make it much easier to write the algorithm for R_5 -> R_6 of polymorphic input channels
 
-			//this->pinch(dummyTailIt);
-			this->pinch(defTransitionIt); //TODO(steven.kneiser): umm, why not just rename the lvar of defTransition?
-			//  ...ahh, this seperation might make it much easier to write the algorithm for R_5 -> R_6 of polymorphic input channels
+		// Create new Use-Def for var fork
+		useDefChain forkChain;
+		forkChain.varIdx = varForkIdx;
+		if (varForkIdx >= this->vars.size()) { internal("", "ERROR: varForkIdx out-of-bounds", __FILE__, __LINE__); continue; }
+		forkChain.name = this->vars[varForkIdx].name;
+		forkChain.defs = {forkTransitionIdx};
+		this->useDefChains[varForkIdx] = forkChain;
 
 		//chain.defs.insert(forkTransitionIdx);
 		chain.defs.erase(defTransitionIdx);
