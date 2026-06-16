@@ -2289,12 +2289,13 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 	petri::iterator forkTransitionIt(petri::transition::type, forkTransitionIdx);
 
 
-
 	// Create forking assignments of branches
 	//TODO(steven.kneiser): Clean up the awkward "--0" tail workaround (tempting because getEnumeratedVar helper always trails int, which can awkwardly mix with DSA-enumerated vars from userName)
-	VarIdx varForkIdx = this->getEnumeratedVar(varAssigned, 0, "~fork--");
+	VarIdx forkVarIdx = this->getEnumeratedVar(varAssigned, 0, "~fork--");
+	if (not this->useDefChains.contains(forkVarIdx)) { internal("", "ERROR: forkVarIdx not found in this->useDefChains", __FILE__, __LINE__); return; }
+	useDefChain &forkChain = this->useDefChains[forkVarIdx];
 
-	//arithmetic::Action forkAssignment(Expression::varOf(varForkIdx), rexpr);
+	//arithmetic::Action forkAssignment(Expression::varOf(forkVarIdx), rexpr);
 	////TODO(steven.kneiser): don't forget to include guard, g, if there is one! (repeat the impl in rewriteAssignmentAsChannel() )
 	//chp::transition forkTransition(Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
 	//petri::iterator forkTransitionIt = this->super::insert_after(transitionIt, forkTransition);
@@ -2323,7 +2324,7 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 	//petri::iterator dummyTailIt = this->super::insert_after(dummyHeadIt, chp::transition());
 
 
-	//varAssignedUseDefChain.copyProcess = varForkIdx;  //TODO(steven.kneiser): absolutely disgusting, egregious type violation to explore one development idea. It just needs to be ANYTHING to help us dedup
+	//varAssignedUseDefChain.copyProcess = forkVarIdx;  //TODO(steven.kneiser): absolutely disgusting, egregious type violation to explore one development idea. It just needs to be ANYTHING to help us dedup
 
 
 	size_t branchCount = 0;
@@ -2332,66 +2333,82 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 		if (use >= this->vars.size()) { continue; }
 		string userName = this->vars[use].name;
 
-		VarIdx varBranchIdx = this->getEnumeratedVar(varAssigned, 0, "~branch~" + userName + "--");
-		TransitionIdx branchTransitionIdx = this->createVarDefBranch(varAssigned, varBranchIdx);
+		VarIdx branchVarIdx = this->getEnumeratedVar(varAssigned, 0, "~branch~" + userName + "--");  //TODO(steven.kneiser): leverage branchCount enumeration?
+		TransitionIdx branchTransitionIdx = this->createVarDefBranch(varAssigned, branchVarIdx);
 
 		//TODO(steven.kneiser): Clean up the awkward "--0" tail workaround (tempting because getEnumeratedVar helper always trails int, which can awkwardly mix with DSA-enumerated vars from userName)
-		arithmetic::Action branchAssignment(Expression::varOf(varBranchIdx), Expression::varOf(varForkIdx));
+		arithmetic::Action branchAssignment(Expression::varOf(branchVarIdx), Expression::varOf(forkVarIdx));
 		chp::transition branchTransition(Expression::vdd(), arithmetic::Choice({{branchAssignment}}));
 
 		petri::iterator branchIt = this->super::insert_alongside(forkTransitionIt, dummyTailIt, branchTransition);
 		branchIts.push_back(branchIt);
 
-		//// Find this user's defTransitionIdx (could be better merged with "uses" parameter of this function?)
-		//for (TransitionIdx usingTransitionIdx : varAssignedUseDefChain.uses) {
-		//	if (not this->transitions.is_valid(usingTransitionIdx)) { continue; }  // redundant for future-proof safety
-		//	if (not this->isTargetVarOfTransition(use, usingTransitionIdx)) { continue; }
-
-		//	//TODO(steven.kneiser): wait, wait if this skips (e.g. pythonic `for-else` or `nobreak` clause) and we never find anything ...but proceed to remapVar anyway? what should be the default case?
 
 
-		//	this->remapVarInTransition(varAssigned, varBranchIdx, usingTransitionIdx);
 
-		//	//TODO(steven.kneiser): Finally, update the relevant useDef's to preserve their correctness!
-		//	//  We can update this properly with new info or at least leave UseDef's like a todolist for replacement
 
-		//	// Substitute new sendTransition for previous "using" Transition, assigning to this user or sending on this user's channel
-		//	//TODO(steven.kneiser): perf optimization: modify useDefChain in-place
-		//	if (this->useDefChains.contains(varAssigned)) {
-		//		vector<VarIdx> &varUses = this->useDefChains[varAssigned].uses;
-		//		//NOTE(steven.kneiser): VERY dangerous to mutate an object we're iterating over,
-		//		//   ...but this is okay because we're breaking the iteration after this match
+		if (not this->useDefChains.contains(branchVarIdx)) { internal("", "ERROR: branchVarIdx not found in this->useDefChains", __FILE__, __LINE__); continue; }
+		useDefChain &branchChain = this->useDefChains[branchVarIdx];
 
-		//		auto it = std::find(varUses.begin(), varUses.end(), usingTransitionIdx);
-		//		if (it != varUses.end()) { varUses.erase(it); }
-		//		////varUses.push_back(branchIt.index);  //TODO(steven.kneiser): ummmmm this only makes sense on channel REWRITE, not here where we're merely replacing this with a branch
-		//		////   ...the TRANSITION isn't new like a channel-rewrite, there's a new def but we have to do a channel rewrite here to justify
-		//		////   (e.g. the ideal would be `b_1~branch~<user>` needs to point to this new branch iter as the the def iter)
+		//TODO(steven.kneiser): include sourceChain for pruning old Use-Def
+		VarIdx sourceVarIdx = varAssigned;
+		if (not this->useDefChains.contains(sourceVarIdx)) { internal("", "ERROR: sourceVarIdx not found in this->useDefChains", __FILE__, __LINE__); continue; }
+		useDefChain &sourceChain = this->useDefChains[sourceVarIdx];
 
-		//		//TODO(steven.kneiser): oh crap, now that we predefine this list WE'RE MODIFYING IT WHILE ITERATING OVER IT! see varAssignedUseDefChain ....ugh
-		//		// IDEA: okay, let's batch all these "toOverwrite" updates to useDefs for after the branches are made ...perhaps even after the fork is done?
-		//		// ahh, this can be safe if we gaurantee we break upon any mutation?
-		//		//TODO(steven.kneiser): pushd pushd pushd RETVRN HERE
-		//		//  ... aha, the right answer is to transform this from a range-based for-loop to an iterator-based one, and pass that iterator to erase
 
-		//		////this->useDefChains[varAssigned].uses = varUses;   // unneeded since we modified reference
-		//	}
 
-		//	break;  // if isTargetVarOfTransition(), then we've found what we've already processed our match
+		////// Find this user's defTransitionIdx (could be better merged with "uses" parameter of this function?)
 
-		//	//TODO(steven.kneiser): oof yikes, I'm preserving the useDefChain of varAssigned, "b_1", here
-		//	//   ...instead of substituting for varForkIdx, "b_1~branch~<user>--0", which it now SHOULD be (specifically in the INDEX of the useDefChains)
+		//TODO(stevem.kneiser): this deprecated block is likely ready to prune
+		////for (TransitionIdx usingTransitionIdx : varAssignedUseDefChain.uses) {
+		////	if (not this->transitions.is_valid(usingTransitionIdx)) { continue; }  // redundant for future-proof safety
+		////	if (not this->isTargetVarOfTransition(use, usingTransitionIdx)) { continue; }
 
-		//	//TODO(steven.kneiser): should useDefChains really be a .uses -> map[varIdx-of-user] -> transitionIdx-of-usage? or vice versa? Should be a Mapping<size_t> (more precisely, VarIdx <-> TransitionIdx>)
-		//}
+		////	//TODO(steven.kneiser): wait, wait if this skips (e.g. pythonic `for-else` or `nobreak` clause) and we never find anything ...but proceed to remapVar anyway? what should be the default case?
+
+
+		////	this->remapVarInTransition(varAssigned, branchVarIdx, usingTransitionIdx);
+
+		////	//TODO(steven.kneiser): Finally, update the relevant useDef's to preserve their correctness!
+		////	//  We can update this properly with new info or at least leave UseDef's like a todolist for replacement
+
+		////	// Substitute new sendTransition for previous "using" Transition, assigning to this user or sending on this user's channel
+		////	//TODO(steven.kneiser): perf optimization: modify useDefChain in-place
+		////	if (this->useDefChains.contains(varAssigned)) {
+		////		vector<VarIdx> &varUses = this->useDefChains[varAssigned].uses;
+		////		//NOTE(steven.kneiser): VERY dangerous to mutate an object we're iterating over,
+		////		//   ...but this is okay because we're breaking the iteration after this match
+
+		////		auto it = std::find(varUses.begin(), varUses.end(), usingTransitionIdx);
+		////		if (it != varUses.end()) { varUses.erase(it); }
+		////		////varUses.push_back(branchIt.index);  //TODO(steven.kneiser): ummmmm this only makes sense on channel REWRITE, not here where we're merely replacing this with a branch
+		////		////   ...the TRANSITION isn't new like a channel-rewrite, there's a new def but we have to do a channel rewrite here to justify
+		////		////   (e.g. the ideal would be `b_1~branch~<user>` needs to point to this new branch iter as the the def iter)
+
+		////		//TODO(steven.kneiser): oh crap, now that we predefine this list WE'RE MODIFYING IT WHILE ITERATING OVER IT! see varAssignedUseDefChain ....ugh
+		////		// IDEA: okay, let's batch all these "toOverwrite" updates to useDefs for after the branches are made ...perhaps even after the fork is done?
+		////		// ahh, this can be safe if we gaurantee we break upon any mutation?
+		////		//TODO(steven.kneiser): pushd pushd pushd RETVRN HERE
+		////		//  ... aha, the right answer is to transform this from a range-based for-loop to an iterator-based one, and pass that iterator to erase
+
+		////		////this->useDefChains[varAssigned].uses = varUses;   // unneeded since we modified reference
+		////	}
+
+		////	break;  // if isTargetVarOfTransition(), then we've found what we've already processed our match
+
+		////	//TODO(steven.kneiser): oof yikes, I'm preserving the useDefChain of varAssigned, "b_1", here
+		////	//   ...instead of substituting for forkVarIdx, "b_1~branch~<user>--0", which it now SHOULD be (specifically in the INDEX of the useDefChains)
+
+		////	//TODO(steven.kneiser): should useDefChains really be a .uses -> map[varIdx-of-user] -> transitionIdx-of-usage? or vice versa? Should be a Mapping<size_t> (more precisely, VarIdx <-> TransitionIdx>)
+		////}
 
 
 		// Rename use of this var with its respective branch
 		Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
-		varRename.set(varAssigned, varBranchIdx);
+		varRename.set(varAssigned, branchVarIdx);
 
 		useDefChain userChain = this->useDefChains[use];
-		set<TransitionIdx> &useTransitionIdxs = userChain.isChannel ? userChain.uses : userChain.defs;
+		set<TransitionIdx> &useTransitionIdxs = userChain.isChannel ? userChain.uses : userChain.defs;  //NOTE(steven.kneiser): this encapsulates the "use vs def" ambiguity of send-channels, which are like assignment defs
 		for (TransitionIdx useTransitionIdx : useTransitionIdxs) {
 			if (not this->transitions.is_valid(useTransitionIdx)) { internal("", "useTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
 			chp::transition &userTransition = this->transitions[useTransitionIdx];
@@ -2405,7 +2422,10 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 				}
 			}
 
-			//useChain.uses
+			useTransitionIdxs.insert(useTransitionIdx);
+			branchChain.uses.insert(useTransitionIdx);
+		//TODO(steven.kneiser): include sourceChain for pruning old Use-Def
+			sourceChain.uses.erase(useTransitionIdx);
 		}
 
 
@@ -2422,78 +2442,23 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 		this->erase(umbilicalCordIt);
 
 
-		userChain.defs.insert(branchTransitionIt.index);
-		//userChain.defs.erase();
-
+		forkChain.uses.insert(branchIt.index);
+		forkChain.uses.erase(branchTransitionIdx);
+		branchChain.defs.insert(branchIt.index);
+		branchChain.defs.erase(branchTransitionIdx);
+		useTransitionIdxs.erase(branchTransitionIdx);
 
 
 
 		//TODO(steven.kneiser): RETVRN HERE dis mf bbbbbb🅱️BUSSted
 		//TODO(steven.kneiser): now just document this properly in ProjectionSets
-		VarIdx branchChannelIdx = this->getEnumeratedVar(varBranchIdx, branchCount, "~BRANCH_CHAN~");  //TODO(steven.kneiser): UGH verify count
+		VarIdx branchChannelIdx = this->getEnumeratedVar(branchVarIdx, branchCount, "~BRANCH_CHAN~");  //TODO(steven.kneiser): UGH verify count
 		projectionSets[use].insert(ProjectionItem(branchChannelIdx, true, true));
 		projectionSets[varAssigned].insert(ProjectionItem(branchChannelIdx, true, false));
 		//TODO(steven.kneiser): convert guardVarIdx to branch-specific: projectionSets[varBranchVarIdx].insert(ProjectionItem(branchChannelIdx, true, false));
 
-
-
-
-
-
-		// copied over from rewriteEacheMultiUseVarAsCopyProc for inspiration on migrating to createVarDefBranch helper
-		////		//NOTE(steven.kneiser): the canonical defVar likely won't match the local variation (e.g. DSA made `d` -> `d_1` and other Decomp might make `d_1` -> `d_1~lone--0` etc etc)
-		////		//TODO(steven.kneiser): source the more relevant DSA++ variant of defVarIdx from defTransitonIdx
-		////		VarIdx localDefVarIdx;
-		////		if (not this->transitions.is_valid(defTransitionIdx)) { cerr << "ERROR: defTransitionIdx @ T" << defTransitionIdx << " isn't valid. Skipping ahead." << endl; continue; }
-		////		chp::transition &defTransition = this->transitions[defTransitionIdx];
-		////		arithmetic::Choice &choice = defTransition.action;
-		////		for (arithmetic::Parallel &term : choice.terms) {
-		////			for (arithmetic::Action &action : term.actions) {
-		////				if (not action.lvalue.isUndef()) {
-		////					localDefVarIdx = action.lvalue.top.index;  //TODO(steven.kneiser): unsafe: don't assume lvalue is the var, might even just be a light container expression containing the var?
-		////				}
-		////			}
-		////			//break;?
-		////		}
-
-		////		if (localDefVarIdx >= this->vars.size()) { clog << "ERROR: var at index " << localDefVarIdx << "is not in this->vars. Skipping." << endl; continue; }
-		////		string localDefVarName = this->vars[localDefVarIdx].name;
-
-		////		//TODO(steven.kneiser): ugh, swap the name orderings (& idx vs name orientation)
-		////		VarIdx newBranchVarIdx = this->getEnumeratedVar(guardVarIdx, guardSplitCount, "~gsplit-" + localDefVarName + "~");  //TODO: study other naming examples
-		////		cout << " ==>  " << this->vars[newBranchVarIdx].name << "  @ " << newBranchVarIdx << endl;
-
-		////		//TransitionIdx branchTransitionIdx = this->createVarDefBranch(localDefVarIdx, newBranchVarIdx, defTransitionIdx);
-		////		TransitionIdx branchTransitionIdx = this->createVarDefBranch(guardVarIdx, newBranchVarIdx); //, defTransitionIdx);
-		////		cout << "   >/<  T" << branchTransitionIdx << endl;
-		////		//TODO(steven.kneiser): pushd RETVRN HERE to use this new guardVarBranch to name to determine new duplicates of the branch defs (appropriately renamed)
-
-		////		//// 3) rename target Transition w/ new branch var
-		////		//if (not this->transitions.is_valid(targetTransitionIdx)) { cerr << "ERROR: targetTransitionIdx @ T" << targetTransitionIdx << " isn't valid. No graceful failure." << endl; return 0; }
-		////		//chp::transition &targetTransition = this->transitions[targetTransitionIdx];
-
-		////		//Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
-		////		//varRename.set(sourceVarIdx, branchVarIdx);
-
-		////		//arithmetic::Choice &choice = targetTransition.action;
-		////		//targetTransition.guard.applyVars(varRename);
-		////		//for (arithmetic::Parallel &term : choice.terms) {
-		////		//	for (arithmetic::Action &action : term.actions) {
-		////		//		action.lvalue.applyVars(varRename);
-		////		//		action.rvalue.applyVars(varRename);
-		////		//	}
-		////		//	//break;?
-		////		//}
-
-		////		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
-		////		this->pinch(defTransitionIt);
-
-		////		//TODO(steven.kneiser): then 4) document this properly in ProjectionSets ...should these be plumbed into createVarDefBranch() as default behavior?
-		////		//   Meh, let's start here & integrate it if we later discover the desire for ALWAYS. This feels like something that should be part of analysis:useDefs, NOT presumed to always be related to Projection (i.e. that helper should probably stay tight & focused instead of assuming it's exclusively useful for Projection)
 		branchCount++;
 	}
-
-
 
 
 	// Rewrite assignments as channels, isolating this Copy Process for Projection in Process Decomposition
@@ -2610,8 +2575,8 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 
 		////// Insert new "x_fork := x;" copy-assignment immediately after x assignment
 		////// This serves as the base of a fork, splitting/parallelizing out to every use/reference
-		//VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "~fork--");
-		//projectionSets[varForkIdx].insert(ProjectionItem(varForkIdx));
+		//VarIdx forkVarIdx = this->getEnumeratedVar(dependency, 0, "~fork--");
+		//projectionSets[forkVarIdx].insert(ProjectionItem(forkVarIdx));
 
 		//////TODO: is this much recalculation needed to retrace definition?
 		//useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
@@ -2622,7 +2587,7 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 		////TODO: append useDef after inserting new assignment?  nah, because
 		////   because decomp/synthesis is a destructive operation (if rerun, we would recalculate the CFG & use-defs anyways
 
-		VarIdx varForkIdx = this->getEnumeratedVar(dependency, 0, "~fork--");
+		VarIdx forkVarIdx = this->getEnumeratedVar(dependency, 0, "~fork--");
 
 		UseDefIdx copyProcessChainIdx = dependency;  //TODO(steven.kneiser): eww, egregious type violation until this->useDefs migration
 		if (not this->useDefChains.contains(copyProcessChainIdx)) { cerr << "useDefChain not found at index " << copyProcessChainIdx << ". Unable to rewrite base fork as Channel communication" << endl; continue; }  //TODO(steven.kneiser): migrate to newer this->useDefs
@@ -2636,7 +2601,7 @@ void graph::rewriteEachMultiUseVarAsCopyProcess(
 		VarIdx forkChannelIdx = this->getEnumeratedVar(dependency, 0, "~FORK_CHAN--");
 		clog << "++ " << forkChannelIdx << endl;
 		projectionSets[dependency].insert(ProjectionItem(forkChannelIdx, true, true));
-		projectionSets[varForkIdx].insert(ProjectionItem(forkChannelIdx, true, false));
+		projectionSets[forkVarIdx].insert(ProjectionItem(forkChannelIdx, true, false));
 
 
 		//TODO(steven.kneiser): restudy the bound of this function ...should this projectionSets update be done internally? or perhaps more logic should be pulled out?
@@ -2718,11 +2683,11 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 			//TODO(steven.kneiser): rip guardVar out of lone-vars by updating invDepSet
 			// Document fork in Projection Sets
-			VarIdx varForkIdx = this->getEnumeratedVar(guardVarIdx, 0, "~fork--");
+			VarIdx forkVarIdx = this->getEnumeratedVar(guardVarIdx, 0, "~fork--");
 			VarIdx forkChannelIdx = this->getEnumeratedVar(guardVarIdx, 0, "~FORK_CHAN--");
 			//clog << "++ " << forkChannelIdx << endl;
 			projectionSets[guardVarIdx].insert(ProjectionItem(forkChannelIdx, true, true));
-			projectionSets[varForkIdx].insert(ProjectionItem(forkChannelIdx, true, false));
+			projectionSets[forkVarIdx].insert(ProjectionItem(forkChannelIdx, true, false));
 
 
 
@@ -2771,7 +2736,7 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 				//TODO(steven.kneiser): now just document this properly in ProjectionSets
 				VarIdx branchChannelIdx = this->getEnumeratedVar(guardVarIdx, guardSplitCount, "~BRANCH_CHAN~");  //TODO(steven.kneiser): verify count
-				projectionSets[varForkIdx].insert(ProjectionItem(branchChannelIdx, true, true));
+				projectionSets[forkVarIdx].insert(ProjectionItem(branchChannelIdx, true, true));
 				projectionSets[guardVarIdx].insert(ProjectionItem(branchChannelIdx, true, false));
 				//TODO(steven.kneiser): convert guardVarIdx to branch-specific: projectionSets[newBranchVarIdx].insert(ProjectionItem(branchChannelIdx, true, false));
 
@@ -2817,10 +2782,9 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 					petri::iterator predicateTransitionIt = outBlock.transitions[0];
 					TransitionIdx predicateTransitionIdx = predicateTransitionIt.index;
 
-					if (not this->transitions.is_valid(predicateTransitionIdx)) { internal("", "ERROR: predicateTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
-					chp::transition &predicateTransition = this->transitions[predicateTransitionIdx];
-
-					//TODO(steven.kneiser): rename predicate
+					//if (not this->transitions.is_valid(predicateTransitionIdx)) { internal("", "ERROR: predicateTransitionIdx isn't valid", __FILE__, __LINE__); continue; }
+					//chp::transition &predicateTransition = this->transitions[predicateTransitionIdx];
+					//TODO(steven.kneiser): rename predicate vs predicateCopy (predicateTransitionCopy) to splitPredicate[TransitionIdx]
 
 					// For predicates containing the guardVar, make copies for each split/branch
 					for (auto &[branchVarIdx, localDefVarIdx] : branchVarIdxs) {
@@ -2971,22 +2935,22 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 
 	//TODO(steven.kneiser): prune/delete this header? I actually have even more conviction in it
 	TransitionIdx forkTransitionIdx = sourceChain.copyProcess;  //TODO(steven.kneiser): clean up. for now, we'll test the egregious type violation of UseDefIdx actually matching the VarIdx in this->vars
-	VarIdx varForkIdx = this->getEnumeratedVar(sourceVarIdx, 0, "~fork--");
-	if (varForkIdx >= this->vars.size()) { cerr << "ERROR: varForkIdx @ " << varForkIdx << " doesn't exist in this->vars. No graceful failure." << endl; return 0; }
+	VarIdx forkVarIdx = this->getEnumeratedVar(sourceVarIdx, 0, "~fork--");
+	if (forkVarIdx >= this->vars.size()) { cerr << "ERROR: forkVarIdx @ " << forkVarIdx << " doesn't exist in this->vars. No graceful failure." << endl; return 0; }
 
-	if (not this->useDefChains.contains(varForkIdx)) { internal("", "ERROR: varForkIdx not in this->useDefChains", __FILE__, __LINE__); return 0; }
-	useDefChain &forkChain = this->useDefChains[varForkIdx];
+	if (not this->useDefChains.contains(forkVarIdx)) { internal("", "ERROR: forkVarIdx not in this->useDefChains", __FILE__, __LINE__); return 0; }
+	useDefChain &forkChain = this->useDefChains[forkVarIdx];
 
 
 	//// 2) Create branch transition atop sourceVar's CopyProcess fork transition
-	///////VarIdx varForkIdx = sourceChain.copyProcess;  //TODO(steven.kneiser): clean up. for now, we'll test the egregious type violation of UseDefIdx actually matching the VarIdx in this->vars
-	/////if (varForkIdx >= this->vars.size()) { cerr << "ERROR: varForkIdx @ " << varForkIdx << " doesn't exist in this->vars. No graceful failure." << endl; return 0; }
+	///////VarIdx forkVarIdx = sourceChain.copyProcess;  //TODO(steven.kneiser): clean up. for now, we'll test the egregious type violation of UseDefIdx actually matching the VarIdx in this->vars
+	/////if (forkVarIdx >= this->vars.size()) { cerr << "ERROR: forkVarIdx @ " << forkVarIdx << " doesn't exist in this->vars. No graceful failure." << endl; return 0; }
 
 	///////TODO(steven.kneiser): are source & fork the best taxonomy for disambiguating these chains? Make the parameters to this func match! Let this inform or vice versa.
 
-	///////UseDefIdx forkUseDefIdx = this->getUseDefIdxByVar(varForkIdx);
-	/////if (not this->useDefChains.contains(varForkIdx)) { cerr << "ERROR: " << endl; return 0; }
-	/////const useDefChain &forkChain = this->useDefChains[varForkIdx];  //TODO: egregious type violation again, this varIdx should match the UseDefIdx if we go that other route
+	///////UseDefIdx forkUseDefIdx = this->getUseDefIdxByVar(forkVarIdx);
+	/////if (not this->useDefChains.contains(forkVarIdx)) { cerr << "ERROR: " << endl; return 0; }
+	/////const useDefChain &forkChain = this->useDefChains[forkVarIdx];  //TODO: egregious type violation again, this varIdx should match the UseDefIdx if we go that other route
 
 	/////if (forkChain.defs.empty()) { cerr << "ERROR: forkChain.defs is empty. No graceful failure." << endl; return 0; }
 	/////TransitionIdx forkTransitionIdx = forkChain.defs[0];
@@ -2997,7 +2961,7 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 	if (not this->transitions.is_valid(forkTransitionIdx)) { cerr << "ERROR: forkTransitionIdx @ T" << forkTransitionIdx << " isn't valid. No graceful failure." << endl; return 0; }
 	//chp::transition &forkTransition = this->transitions[forkTransitionIdx];
 
-	arithmetic::Action branchAssignment(Expression::varOf(branchVarIdx), Expression::varOf(varForkIdx));
+	arithmetic::Action branchAssignment(Expression::varOf(branchVarIdx), Expression::varOf(forkVarIdx));
 	chp::transition branchTransition(Expression::vdd(), arithmetic::Choice({{branchAssignment}}));
 	//TODO(steven.kneiser): preserve guard g?? Don't see how one might be here, but just to be safe/thorough? ...to save future stumblers
 
@@ -3037,8 +3001,8 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 		////string userName = this->vars[use].name;
 
 		//////TODO(steven.kneiser): Clean up the awkward "--0" tail workaround (tempting because getEnumeratedVar helper always trails int, which can awkwardly mix with DSA-enumerated vars from userName)
-		////VarIdx varBranchIdx = this->getEnumeratedVar(varAssigned, 0, "~branch~" + userName + "--");
-		////arithmetic::Action branchAssignment(Expression::varOf(varBranchIdx), Expression::varOf(varForkIdx));
+		////VarIdx branchVarIdx = this->getEnumeratedVar(varAssigned, 0, "~branch~" + userName + "--");
+		////arithmetic::Action branchAssignment(Expression::varOf(branchVarIdx), Expression::varOf(forkVarIdx));
 		////chp::transition branchTransition(Expression::vdd(), arithmetic::Choice({{branchAssignment}}));
 
 		////petri::iterator branchIt = this->super::insert_alongside(forkTransitionIt, dummyTailIt, branchTransition);
@@ -3057,8 +3021,8 @@ void graph::createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<Proj
 		clog << endl << "==> COPY: " << chain.name << endl << endl;
 		//TODO(steven.kneiser): now abstract into this->createVarDefFork(varIdx) helper
 
-		////VarIdx varForkIdx = this->getEnumeratedVar(varIdx, 0, "~fork--");
-		////projectionSets[varForkIdx].insert(ProjectionItem(varForkIdx));
+		////VarIdx forkVarIdx = this->getEnumeratedVar(varIdx, 0, "~fork--");
+		////projectionSets[forkVarIdx].insert(ProjectionItem(forkVarIdx));
 
 		////////TODO: is this much recalculation needed to retrace definition?
 		////useDefChain &dependencyUseDefChain = this->useDefChains[varIdx];
@@ -3088,14 +3052,14 @@ void graph::createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<Proj
 			}
 		}
 
-		VarIdx varForkIdx = this->getEnumeratedVar(varIdx, 0, "~fork--");
+		VarIdx forkVarIdx = this->getEnumeratedVar(varIdx, 0, "~fork--");
 		//VarIdx varSourceIdx = this->getEnumeratedVar(varIdx, 0, "~lone--");
-		//chain.copyProcess = varForkIdx;  //TODO(steven.kneiser): egregious type violation, should be UseDefIdx
+		//chain.copyProcess = forkVarIdx;  //TODO(steven.kneiser): egregious type violation, should be UseDefIdx
 		//  ...where we look it up via "chain.copyProcess.def/s[0]",
 
 		// Now create fork transition
 		//TODO(steven.kneiser): perf optimization: this an opportunity to directly embed the original rval/rexpr instead of a redundant assignment/channel-communication before the fork
-		arithmetic::Action forkAssignment(Expression::varOf(varForkIdx), rexpr); //Expression::varOf(varSourceIdx)
+		arithmetic::Action forkAssignment(Expression::varOf(forkVarIdx), rexpr); //Expression::varOf(varSourceIdx)
 																																						 //TODO(steven.kneiser): don't forget to include guard, g, if there is one! (repeat the impl in rewriteAssignmentAsChannel() )
 		chp::transition forkTransition(Expression::vdd(), arithmetic::Choice({{forkAssignment}}));
 		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
@@ -3113,7 +3077,7 @@ void graph::createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<Proj
 
 		this->copyProcessChainIdxs.insert(chain.varIdx);  //TODO(steven.kneiser): egregious type violation, should be UseDefIdx
 																											//  ...where we look it up via "chain.copyProcess.def/s[0]",
-																											//this->copyProcessChainIdxs.insert(varForkIdx);  //TODO(steven.kneiser): egregious type violation, should be UseDefIdx
+																											//this->copyProcessChainIdxs.insert(forkVarIdx);  //TODO(steven.kneiser): egregious type violation, should be UseDefIdx
 
 																											//this->pinch(dummyTailIt);
 		this->pinch(defTransitionIt); //TODO(steven.kneiser): umm, why not just rename the lvar of defTransition?
@@ -3121,11 +3085,11 @@ void graph::createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<Proj
 
 		// Create new Use-Def for var fork
 		useDefChain forkChain;
-		forkChain.varIdx = varForkIdx;
-		if (varForkIdx >= this->vars.size()) { internal("", "ERROR: varForkIdx out-of-bounds", __FILE__, __LINE__); continue; }
-		forkChain.name = this->vars[varForkIdx].name;
+		forkChain.varIdx = forkVarIdx;
+		if (forkVarIdx >= this->vars.size()) { internal("", "ERROR: forkVarIdx out-of-bounds", __FILE__, __LINE__); continue; }
+		forkChain.name = this->vars[forkVarIdx].name;
 		forkChain.defs = {forkTransitionIdx};
-		this->useDefChains[varForkIdx] = forkChain;
+		this->useDefChains[forkVarIdx] = forkChain;
 
 		//chain.defs.insert(forkTransitionIdx);
 		chain.defs.erase(defTransitionIdx);
@@ -3146,7 +3110,7 @@ void graph::createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<Proj
 		VarIdx forkChannelIdx = this->getEnumeratedVar(varIdx, 0, "~FORK_CHAN--");
 		clog << "++ " << forkChannelIdx << endl;
 		projectionSets[varIdx].insert(ProjectionItem(forkChannelIdx, true, true));
-		projectionSets[varForkIdx].insert(ProjectionItem(forkChannelIdx, true, false));
+		projectionSets[forkVarIdx].insert(ProjectionItem(forkChannelIdx, true, false));
 	}
 
 	clog << "created all Copy Processes in batch." << endl;
@@ -3417,7 +3381,7 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 	//
 	this->rewriteAssignmentsAsChannels(invertedDependencySets, projectionSets);
 
-	clog << endl << "  # ## ### < PS> ### ## #  " << endl;
+	clog << endl << endl << "  # ## ### < PS> ### ## #  " << endl;
 	auto toString = [this](const ProjectionItem &p) -> string {
 		return this->vars[p.index].name + (p.isChannel ? (p.isSend ? "!" : "?") : "");
 	};
@@ -3432,7 +3396,7 @@ unordered_map<VarIdx, set<ProjectionItem>> graph::computeProjectionSets() {
 					});
 			clog << endl;
 			});
-	clog << "  # ## ### </PS> ### ## #  " << endl << endl;
+	clog << "  # ## ### </PS> ### ## #  " << endl << endl << endl;
 
 	return projectionSets;
 }
