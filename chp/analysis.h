@@ -15,17 +15,23 @@ typedef size_t VarDSAIdx;
 typedef size_t VarIdx;
 typedef size_t VarValue;
 
+//TODO(steven.kneiser): impl `struct analysis {}` which should be a chp::graph-esque copy with all the analysis-related properties and methods extracted
+
 struct useDefChain {
 	//TODO(steven.kneiser): UseDefIdx index;
 	string name;  //TODO(steven.kneiser): delete. Should be reference/looked-up in this->vars
 	VarIdx varIdx;
 	bool isChannel = false;
 	bool isSend = false;
+	//bool isInternal = false;
+
 	//VarDSAIdx varDSAIdx = 0;  //std::numeric_limits<size_t>::max();
-	//bool isChannel = false;  //TODO(steven.kneiser): perhaps this should be more like ProjectionItem, if we're going to encapsulate ProjSets
 	set<TransitionIdx> defs;
 	set<TransitionIdx> uses;
 
+	// transition_idx -> channelVarIdx using this var in sends vs recvs
+	unordered_map<TransitionIdx, VarIdx> ins;
+	unordered_map<TransitionIdx, VarIdx> outs;
 
 	//TODO(steven.kneiser): these should eventually be vector<useDefChain*>,
   //   no: vector<useDefIdx> into g.useDefChains would fit our pattern

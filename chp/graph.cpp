@@ -2140,6 +2140,7 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 		//TODO(steven.kneiser): What about all the inTransitions+Places to transitionIt? Verify that pinch works precisely
 		sendTransitionIt = this->super::insert_after(transitionIt, sendTransition);
 	}
+	TransitionIdx sendTransitionIdx = sendTransitionIt.index;
 
 	////TODO(steven.kneiser): shouldn't insert_alongside() eloquently handle all these already?
 	//for (petri::iterator outPlace : this->next(sendTransitionIt)) {
@@ -2150,7 +2151,13 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 
 	petri::iterator dummyTailIt = this->super::insert_after(sendTransitionIt, chp::transition());
 	petri::iterator recvTransitionIt = this->super::insert_alongside(transitionIt, dummyTailIt, recvTransition);
+	TransitionIdx recvTransitionIdx = recvTransitionIt.index;
 	//TODO: this->pinch(dummyTailIt);
+
+
+
+	if (not this->useDefChains.contains(varAssigned)) { internal("", "ERROR: this->useDefChains doesn't contain varAssigned", __FILE__, __LINE__); return; }
+	this->useDefChains[varAssigned].ins[recvTransitionIdx] = channelIdx;
 
 	
 	//TODO(steven.kneiser): Finally, update the relevant useDef's to preserve their correctness!
@@ -2162,15 +2169,64 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 
 		// Substitute new sendTransition for previous assignment
 		//TODO(steven.kneiser): perf optimization: modify useDefChain in-place
-		set<VarIdx> &varUses = this->useDefChains[sendVar].uses;
-		if (varUses.contains(transitionIt.index)) { varUses.erase(transitionIt.index); }
+		set<TransitionIdx> &varUses = this->useDefChains[sendVar].uses;
+		//TODO(steven.kneiser): BIG OOPH! Not a VarIdx anymore! Gross type violation!
+		if (varUses.contains(transitionIdx)) { varUses.erase(transitionIdx); }
 
-		varUses.insert(sendTransitionIt.index);
+		varUses.insert(sendTransitionIdx);
 		this->useDefChains[sendVar].uses = varUses;
+		this->useDefChains[sendVar].outs[sendTransitionIdx] = channelIdx;
 	}
 
 	this->pinch(transitionIt);  // Remove the original assignment
 	//this->pinch(dummyTailIt);  //TODO(steven.kneiser): preserve legibility without this & save it for graph reducers?
+
+
+
+	// Update Use-Defs w/ new internal channel
+	//TODO(steven.kneiser): impl
+	////useDefChain sendChain;
+	////sendChain.varIdx = channelIdx;
+	////if (channelIdx >= this->vars.size()) { internal("", "ERROR: channelIdx out-of-bounds", __FILE__, __LINE__); return; }
+	////sendChain.name = this->vars[channelIdx].name;
+	////sendChain.isChannel = true;
+	////sendChain.isSend = true;
+
+	//useDefChain recvChain;
+	//recvChain.varIdx = channelIdx;
+	//if (channelIdx >= this->vars.size()) { internal("", "ERROR: channelIdx out-of-bounds", __FILE__, __LINE__); return; }
+	//recvChain.name = this->vars[channelIdx].name;
+	//recvChain.isChannel = true;
+	//recvChain.isSend = false;
+
+
+	////sendChain.defs.insert(transitionIdx);
+	////sendChain.uses.insert(transitionIdx);
+	////recvChain.defs.insert(transitionIdx);
+	//recvChain.uses.insert(transitionIdx);
+	////this->useDefChains[channelIdx] = sendChain;
+	//this->useDefChains[channelIdx] = recvChain;
+
+
+	//// just for dev reference
+	//////useDefChain branchChain;
+	//////branchChain.varIdx = branchVarIdx;
+	//////if (branchVarIdx >= this->vars.size()) { internal("", "ERROR: branchVarIdx out-of-bounds", __FILE__, __LINE__); return 0; }
+	//////branchChain.name = this->vars[branchVarIdx].name;
+	//////branchChain.defs = {branchTransitionIdx};
+	//////this->useDefChains[branchVarIdx] = branchChain;
+
+	//////branchChain.defs.insert(branchTransitionIdx);
+	//////forkChain.uses.insert(branchTransitionIdx);
+	////////sourceChain.defs.erase(defTransitionIdx);
+
+
+
+
+
+
+
+
 
 	clog << "rewrote assignment as channel." << endl;
 }
@@ -2991,8 +3047,8 @@ TransitionIdx graph::createVarDefBranch(VarIdx sourceVarIdx, VarIdx branchVarIdx
 	branchChain.defs = {branchTransitionIdx};
 	this->useDefChains[branchVarIdx] = branchChain;
 
-	forkChain.uses.insert(branchTransitionIdx);
 	branchChain.defs.insert(branchTransitionIdx);
+	forkChain.uses.insert(branchTransitionIdx);
 	//sourceChain.defs.erase(defTransitionIdx);
 
 
