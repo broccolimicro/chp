@@ -30,8 +30,8 @@ struct useDefChain {
 	set<TransitionIdx> uses;
 
 	// transition_idx -> channelVarIdx using this var in sends vs recvs
-	unordered_map<TransitionIdx, VarIdx> ins;
-	unordered_map<TransitionIdx, VarIdx> outs;
+	unordered_map<TransitionIdx, VarIdx> ins;  // sends
+	unordered_map<TransitionIdx, VarIdx> outs;  // recvs
 
 	//TODO(steven.kneiser): these should eventually be vector<useDefChain*>,
   //   no: vector<useDefIdx> into g.useDefChains would fit our pattern
