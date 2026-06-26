@@ -2122,7 +2122,6 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 		VarIdx recvChannelIdx = this->getEnumeratedVar(sendVar, 0, channelSuffix + "?--");
 
 
-
 		// Construct "c.send(a)" transition
 		arithmetic::Action sendAction;
 		arithmetic::Expression sendExpr = arithmetic::call(
@@ -2133,9 +2132,10 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 		sendAction.rvalue = sendExpr;
 		chp::transition sendTransition(
 				arithmetic::Expression::vdd(), arithmetic::Choice({{sendAction}}));
-		clog << "++ " << channelIdx << endl
-			<< "+> " << sendExpr << endl;
 
+		if (sendChannelIdx >= this->vars.size()) { internal("", "ERROR: sendChannelIdx not in this->vars", __FILE__, __LINE__); continue; }
+		clog << "   ++ " << sendChannelIdx << " (" << this->vars[sendChannelIdx].name << ")" << endl;
+		clog << " ! >> " << sendExpr << endl;
 
 
 		// Construct "g -> skip" if guard, g, exists
@@ -2183,7 +2183,10 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 		recvAction.rvalue = recvExpr;
 		chp::transition recvTransition(
 				arithmetic::Expression::vdd(), arithmetic::Choice({{recvAction}}));
-		clog << "<+ " << recvExpr << endl;
+
+		if (recvChannelIdx >= this->vars.size()) { internal("", "ERROR: recvChannelIdx not in this->vars", __FILE__, __LINE__); continue; }
+		clog << "   ++ " << recvChannelIdx << " (" << this->vars[recvChannelIdx].name << ")" << endl;
+		clog << " ? << " << recvExpr << endl;
 
 		petri::iterator recvTransitionIt = this->super::insert_alongside(transitionIt, dummyTailIt, recvTransition);
 		TransitionIdx recvTransitionIdx = recvTransitionIt.index;
@@ -2635,6 +2638,15 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		// Substitute "x_usage_n" for x in usage
 		VarIdx varUsageIdx = this->getEnumeratedVar(dependency, 0, "~lone--");
 		this->remapVarInEachTransition(dependency, varUsageIdx);  //false, true
+
+		// Update x's Use-Def chain
+		useDefChain newDepChain = this->useDefChains[dependency];
+		newDepChain.varIdx = varUsageIdx;
+		if (varUsageIdx >= this->vars.size()) { internal("", "ERROR: varUsageIdx not in this->vars", __FILE__, __LINE__); continue; }
+		newDepChain.name = this->vars[varUsageIdx].name;
+		this->useDefChains[varUsageIdx] = newDepChain;
+		//TODO(steven.kneiser): this->useDefChains.erase(dependency);
+
 		//TODO(steven.kneiser): there exists a powerful parallel here to the need to retrieve the transition FROM the var's target/def-er/user that we do for Copy Processes
 		// Ideally, we should just be doing a singular surgical remapping in "this" one transition, not sloppily innefficiently search ALL transitions
 
@@ -3266,6 +3278,7 @@ void graph::createCopyProcessForksForMultiUseVars(unordered_map<VarIdx, set<Proj
 size_t ANALYSIS_SNAPSHOT_COUNT = 0;
 
 void graph::printAnalysis(string caption) {
+	clog << endl << endl << "ANALYSIS " << ANALYSIS_SNAPSHOT_COUNT << ": " << caption << endl << endl;
 #ifdef GRAPHVIZ_SUPPORTED
 	std::filesystem::path debugDirPath = std::filesystem::current_path() / "build" / "dbg";
 	string prefix = "";
@@ -3347,10 +3360,9 @@ void graph::rewriteAssignmentsAsChannels(
 			vector<petri::iterator> branchTransitionIts = this->next(branchPlaceIt);
 			for (petri::iterator branchTransitionIt : branchTransitionIts) {
 
-				this->printAnalysis("3.1");
 				VarIdx branchChannelIdx = this->getEnumeratedVar(chain.varIdx, branchCount, "~BRANCH_CHAN~");
 				this->rewriteAssignmentAsChannel(branchTransitionIt.index, branchChannelIdx);
-				this->printAnalysis("3.2");
+				this->printAnalysis("3.1");
 			}
 			branchCount++;
 		}
@@ -3370,13 +3382,12 @@ void graph::rewriteAssignmentsAsChannels(
 		this->erase(outPlaceIt);
 
 		// Rewrite Copy Process forks as channel
-		this->printAnalysis("3.3");
 		VarIdx forkChannelIdx = this->getEnumeratedVar(chain.varIdx, 0, "~FORK_CHAN--");
 		this->rewriteAssignmentAsChannel(chain.copyProcess, forkChannelIdx);
-		this->printAnalysis("3.4");
+		this->printAnalysis("3.2");
 
 		// Prune Copy Process dummy tail
-		//this->pinch(copyProcessDummyTailIt); //TODO(steven.kneiser): don't prune for legibility? Wouldn't this be pruned by any petri reduce()?
+		//this->pinch(copyProcessDuemyTailIt); //TODO(steven.kneiser): don't prune for legibility? Wouldn't this be pruned by any petri reduce()?
 	}
 
 
