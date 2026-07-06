@@ -23,7 +23,7 @@ chp::graph _importCHPFromString(const string &chp_string, bool debug=false) {
 	tokenizer tokens;
 	tokens.register_token<parse::block_comment>(false);
 	tokens.register_token<parse::line_comment>(false);
-	parse_chp::register_syntax(tokens);
+	parse_chp::factory.register_syntax(tokens);
 
 	tokens.insert("string_input", chp_string, nullptr);
 	chp::graph g;
