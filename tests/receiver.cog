@@ -1,0 +1,9 @@
+msg=0
+while {
+	msg = in.recv()
+	await msg==end {
+		skip
+	} or {
+		logger.send(msg)
+	}
+}

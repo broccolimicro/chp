@@ -1,0 +1,32 @@
+while {
+	WIDTH=16
+	s = (Ad.probe() + Bd.probe() + ci) % pow(2, WIDTH) and
+	co = (Ad.probe() + Bd.probe() + ci) / pow(2, WIDTH)
+
+	await Ac.probe()==0 | Bc.probe()==0 | s[WIDTH]~=ci {
+		Sc.send(0) and Sd.send(s[0:WIDTH])
+		ci=co
+
+		await Ac.probe()==0 {
+			Ac.recv() and Ad.recv()
+
+		} or await Ac.probe()~=0 {
+			skip 
+
+		} and await Bc.probe()==0 {
+			Bc.recv() and Bd.recv()
+
+		} or await Bc.probe()~=0 {
+			skip
+		}
+
+	} or await Ac.probe()==1 & Bc.probe()==1 & co~=ci {
+		Sc.send(1) and Sd.send(s[0:WIDTH])
+		ci=co
+
+	} or await Ac.probe()==1 & Bc.probe()==1 & co==ci {
+		Sc.send(0) and Sd.send(s[0:WIDTH])
+		ci=0
+		Ac.recv() and Ad.recv() and Bc.recv() and Bd.recv()
+	}
+}

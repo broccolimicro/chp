@@ -1,0 +1,10 @@
+state = green
+while {
+	await state==red {
+		state=green
+	} or await state==green {
+		state=yellow
+	} or await state==yellow {
+		state=red
+	}
+}

@@ -1,0 +1,4 @@
+while {
+	l = L.recv()
+	R0.send(l) and R1.send(l)
+}
