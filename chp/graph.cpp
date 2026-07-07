@@ -2796,11 +2796,31 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 
 		set<VarIdx> allOutGuardVars;
 		vector<Expression> outGuards;
-		unordered_map<TransitionIdx, VarIdx> outGens;
+		unordered_map<TransitionIdx, VarIdx> outGens;  //TODO(steven.kneiser): a transition might contain multiple gens (e.g. internal-parallel assigns like "a := 0, b:= 1" etc etc), os make the value a vector/set<VarIdx>
 
 		for (BlockIdx outBlockIdx : block.outs) {
 			const controlFlowBlock &outBlock = this->controlFlowGraph[outBlockIdx];
 			outGens.insert(outBlock.gens.begin(), outBlock.gens.end());
+
+			// Oops, include out-channel SENDS in outGens too! 
+			for (petri::iterator blockTransitionIt : outBlock.transitions) {
+				TransitionIdx blockTransitionIdx = blockTransitionIt.index;
+				//TODO(steven.kneiser): we should skip or ignore the first transition since it SHOULD be a `<predicate> -> skip`
+				if (not this->transitions.is_valid(blockTransitionIdx)) { internal("", "ERROR: blockTransitionIdx not valid", __FILE__, __LINE__); continue; }
+				const chp::transition &blockTransition = this->transitions[blockTransitionIdx];
+
+				const arithmetic::Choice &choice = blockTransition.action;
+				for (const arithmetic::Parallel &term : choice.terms) {
+					for (const arithmetic::Action &action : term.actions) {
+						vector<VarIdx> sendVarIdxs = findOutputChannelsInExpression(action.rvalue);
+						if (not sendVarIdxs.empty()) {
+							outGens[blockTransitionIdx] = sendVarIdxs.front();
+							break;  //TODO(steven.kneiser): yikes, this is more general (e.g. "send(X, a), send(Y, b), send(Z, c)" will return multiple, but right now I've only designed the outGens structure to assume & go with only one). I'll return only the first for now.
+						}
+					}
+				}
+			}
+			//TODO(steven.kneiser): aHA, this gets made a lot easier if we propagate Use-Defs even further back into this reasoning
 
 			petri::iterator outTransitionIt = outBlock.transitions.front();
 			const chp::transition &outTransition = this->transitions[outTransitionIt.index];
@@ -2867,15 +2887,28 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 				//NOTE(steven.kneiser): the canonical defVar likely won't match the local variation (e.g. DSA made `d` -> `d_1` and other Decomp might make `d_1` -> `d_1~lone--0` etc etc)
 				//TODO(steven.kneiser): source the more relevant DSA++ variant of defVarIdx from defTransitonIdx
 
-				VarIdx localDefVarIdx;
+				VarIdx localDefVarIdx = std::numeric_limits<VarIdx>::max();
+				vector<VarIdx> outputChannels;
+
 				arithmetic::Choice &choice = defTransition.action;
 				for (arithmetic::Parallel &term : choice.terms) {
 					for (arithmetic::Action &action : term.actions) {
 						if (not action.lvalue.isUndef()) {
-							localDefVarIdx = action.lvalue.top.index;  //TODO(steven.kneiser): unsafe: don't assume lvalue is the var, might even just be a light container expression containing the var?
+							localDefVarIdx = action.lvalue.top.index;  //TODO(steven.kneiser): unsafe: don't assume lvalue is the var, might even just be a light container expression containing the var? ...aHA or a secd() with a channel as the destination lval
+						}
+
+						vector<VarIdx> outputChannelsFound = findOutputChannelsInExpression(action.rvalue);
+						if (not outputChannelsFound.empty()) {
+							outputChannels.insert(outputChannels.end(),
+									outputChannelsFound.begin(),
+									outputChannelsFound.end());
 						}
 					}
-					//break;?
+				}
+
+				// If no assignedVar found, at least use the first outputChannel if one exists
+				if (localDefVarIdx == std::numeric_limits<VarIdx>::max() and (not outputChannels.empty())) {
+					localDefVarIdx = outputChannels.front();
 				}
 
 				if (localDefVarIdx >= this->vars.size()) { internal("", "ERROR: var is out-of-bounds", __FILE__, __LINE__); continue; }
@@ -2929,8 +2962,8 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 				set<VarIdx> usedVarLookup(usedGuardVars.begin(), usedGuardVars.end());
 
 				const arithmetic::Choice &choice = defTransition.action;
-				for (arithmetic::Parallel term : choice.terms) {
-					for (arithmetic::Action action : term.actions) {
+				for (const arithmetic::Parallel &term : choice.terms) {
+					for (const arithmetic::Action &action : term.actions) {
 						vector<VarIdx> usedRexprVars = getVarsFromExpression(action.rvalue);
 						set<VarIdx> rexprVarLookup(usedRexprVars.begin(), usedRexprVars.end());
 						usedVarLookup.insert(rexprVarLookup.begin(), rexprVarLookup.end());
@@ -2961,9 +2994,12 @@ void graph::rewriteEachGuardVarUsedInMultiDefinitionSelectionsAsCopyProcess(
 						varRename.set(guardVarIdx, branchVarIdx);
 
 						// If guard var is used in block assignments, rename guard usage to appropriate split/branch
-						//if (not this->transitions.is_valid(defTransitionIt.index)) { internal("", "defTransitionCopyIt.index isn't valid", __FILE__, __LINE__); continue; }  //TODO(steven.kneiser): redundant, but ok since paranoid about future dev
-						//chp::transition &defTransition = this->transitions[defTransitionIt.index];
-						defTransition.action.applyVars(varRename);
+						if (localDefVarIdx == defVarIdx) {
+							//TODO(steven.kneiser): clean up this hack to refresh my ref to defTransition (weird how it's stale EVEN IF I make every other read prior to this based on copies)
+							if (not this->transitions.is_valid(defTransitionIdx)) { internal("", "defTransitionCopyIt.index isn't valid", __FILE__, __LINE__); continue; }  //TODO(steven.kneiser): redundant, but ok since paranoid about future dev
+							chp::transition &freshDefTransition = this->transitions[defTransitionIdx];
+							freshDefTransition.action.applyVars(varRename);
+						}
 
 
 						// Make copies of predicate for each split/branch
