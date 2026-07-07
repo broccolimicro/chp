@@ -2122,6 +2122,7 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 		VarIdx recvChannelIdx = this->getEnumeratedVar(sendVar, 0, channelSuffix + "?--");
 
 
+
 		// Construct "c.send(a)" transition
 		arithmetic::Action sendAction;
 		arithmetic::Expression sendExpr = arithmetic::call(
@@ -2173,6 +2174,20 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 
 
 
+
+
+		////TODO(steven.kneiser): RETVRN HERE rename usage of recvChannel { sendVar -> recv(recvChannelIdx) }
+		//Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
+		//varRename.set(sendVar, recvChannelIdx);
+
+		//arithmetic::Expression x = Expression::varOf(0);
+		//arithmetic::RuleSet allVarsToRecvChannels = {
+		//	(x) > arithmetic::call("recv", {arithmetic::ident(arithmetic::Expression::varOf(recvChannelIdx))})
+		//};
+
+
+
+
 		// Construct "b = c.recv()" transition
 		arithmetic::Action recvAction;
 		arithmetic::Expression recvExpr = arithmetic::call(
@@ -2209,14 +2224,6 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 
 
 
-
-		////TODO(steven.kneiser): RETVRN HERE rename usage of recvChannel { sendVar -> recv(recvChannelIdx) }
-		Mapping<VarIdx> varRename(std::numeric_limits<VarIdx>::max(), true);
-		varRename.set(sendVar, recvChannelIdx);
-
-		//arithmetic::RuleSet allVarsToRecvChannels = {
-		//	(x) > arithmetic::call("recv", {arithmetic::ident(arithmetic::Expression::varOf(recvChannelIdx))})
-		//};
 
 
 
@@ -2262,7 +2269,7 @@ void graph::rewriteAssignmentAsChannel(TransitionIdx transitionIdx, VarIdx chann
 	///	//this->useDefChains[sendVar].outs[sendTransitionIdx] = channelIdx;
 	///}
 
-	///this->pinch(transitionIt);  // Remove the original assignment
+	this->pinch(transitionIt);  // Remove the original assignment
 	/////this->pinch(dummyTailIt);  //TODO(steven.kneiser): preserve legibility without this & save it for graph reducers?
 
 
@@ -2400,7 +2407,7 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 	}
 	if (not isAssignment) { return; }  //TODO(steven.kneiser): worth a debug message?
 
-	if (not this->useDefChains.contains(varAssigned)) { cerr << "useDefChain not found for varIdx " << varAssigned << ". Unable to rewrite base fork as Channel communication" << endl; return; } //continue;  //TODO(steven.kneiser): should never happen if this is detected as multi-use vairable,
+	if (not this->useDefChains.contains(varAssigned)) { internal("", "useDefChain not found for varIdx " + std::to_string(varAssigned) + ". Unable to rewrite base fork as Channel communication", __FILE__, __LINE__); return; } //continue;  //TODO(steven.kneiser): should never happen if this is detected as multi-use vairable,
 	//   ...unless the generation of other CopyProcesses collide here (possible on recursive rewrites?) This doesn't seem to fail gracefully, just silently
 	useDefChain &varAssignedUseDefChain = this->useDefChains[varAssigned];
 	//TODO(steven.kneiser): update useDefChain by writing this back at the end of this func (or does this reference hold?)
@@ -2426,7 +2433,7 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 	//if (varAssignedUseDefChain.defs.empty()) { cerr << "ERROR: no definition for var `" << varAssignedUseDefChain.name << "` found. Skipping all branch appending." << endl; return; }
 	//TransitionIdx defTransitionIdx = varAssignedUseDefChain.defs[0];
 
-	if (not varAssignedUseDefChain.hasCopyProcess()) { cerr << "ERROR: no Copy Process found for var `" << varAssignedUseDefChain.name << "`. Skipping all branch appending." << endl; return; }
+	if (not varAssignedUseDefChain.hasCopyProcess()) { internal("", "ERROR: no Copy Process found for var `" + varAssignedUseDefChain.name + "`. Skipping all branch appending.", __FILE__, __LINE__); return; }
 	TransitionIdx forkTransitionIdx = varAssignedUseDefChain.copyProcess;
 	petri::iterator forkTransitionIt(petri::transition::type, forkTransitionIdx);
 
@@ -2446,9 +2453,9 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 
 
 	petri::iterator umbilicalCordIt = this->getForkUmbilicalCord(forkTransitionIt);
-	if (not umbilicalCordIt.valid()) { internal("", "no Copy Process umbilical cord found for forkTransition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); return; }
+	if (not umbilicalCordIt.valid()) { internal("", "ERROR: no Copy Process umbilical cord found for forkTransition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); return; }
 	vector<petri::iterator> umbilicalCordOutTransitionIts = this->next(umbilicalCordIt);
-	if (umbilicalCordOutTransitionIts.empty()) { internal("", "Copy Process umbilical cord doesn't have any out-transitions", __FILE__, __LINE__); return; }
+	if (umbilicalCordOutTransitionIts.empty()) { internal("", "ERROR: Copy Process umbilical cord doesn't have any out-transitions", __FILE__, __LINE__); return; }
 	petri::iterator dummyTailIt = umbilicalCordOutTransitionIts[0];
 
 
@@ -2580,7 +2587,7 @@ void graph::rewriteAssignmentAsCopyProcess(VarIdx varAssigned, TransitionIdx def
 
 		// Prune remaining redundant umbilical cord (place)
 		petri::iterator umbilicalCordIt = this->getForkUmbilicalCord(forkTransitionIt);
-		if (not umbilicalCordIt.valid()) { internal("", "no Copy Process umbilical cord found for forkTransition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); return; }
+		if (not umbilicalCordIt.valid()) { internal("", "ERROR: no Copy Process umbilical cord found for forkTransition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); return; }
 		this->erase(umbilicalCordIt);
 
 
@@ -2625,7 +2632,7 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 	clog << "rewriting each single-use var as a direct channel." << endl;
 
 	for (const auto &[dependency, users] : invertedDependencySets) {
-		clog << endl << "\\/\\/\\/\\/\\/\\/\\/\\/ (single-dep) "
+		clog << "\\/\\/\\/\\/\\/\\/\\/\\/ (single-dep) "
 			<< this->vars[dependency].name << endl;
 
 		size_t useCount = users.size();  //TODO: OOPS! Should still be useDefCounter, but I just need useDef counter instead of keeping count, to ALSO get a trace back to WHICH depndencySet dependency it is used under, which we need to ultimately trace down WHICH transition is it USED in that needs to be remapped with a copy branch
@@ -2645,7 +2652,6 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		if (varUsageIdx >= this->vars.size()) { internal("", "ERROR: varUsageIdx not in this->vars", __FILE__, __LINE__); continue; }
 		newDepChain.name = this->vars[varUsageIdx].name;
 		this->useDefChains[varUsageIdx] = newDepChain;
-		//TODO(steven.kneiser): this->useDefChains.erase(dependency);
 
 		//TODO(steven.kneiser): there exists a powerful parallel here to the need to retrieve the transition FROM the var's target/def-er/user that we do for Copy Processes
 		// Ideally, we should just be doing a singular surgical remapping in "this" one transition, not sloppily innefficiently search ALL transitions
@@ -2655,6 +2661,7 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		petri::iterator defTransitionIt(petri::transition::type, defTransitionIdx);
 		VarIdx channelIdx = this->getEnumeratedVar(dependency, 0, "~LONE_CHAN--");
 		this->rewriteAssignmentAsChannel(defTransitionIdx, channelIdx);
+		this->useDefChains.erase(dependency);  // Prune former Use-Def
 
 		projectionSets[dependency].insert(ProjectionItem(channelIdx, true, true));
 		projectionSets[user].insert(ProjectionItem(channelIdx, true, false));
@@ -3053,7 +3060,7 @@ petri::iterator graph::getForkUmbilicalCord(petri::iterator forkTransitionIt) {
 		}
 	}
 
-	internal("", "no Copy Process umbilical cord found", __FILE__, __LINE__);
+	internal("", "ERROR: no Copy Process umbilical cord found", __FILE__, __LINE__);
 	return petri::iterator();
 }
 
@@ -3348,9 +3355,9 @@ void graph::rewriteAssignmentsAsChannels(
 		//vector<petri::iterator> outPlaceIts = this->next(forkTransitionIt);
 		//if (outPlacesIts.empty()) { cerr << "ERROR: no petri::next() children for forkTransition at index " << forkTransitionIdx << ". No graceful failure." << endl; return 0; }
 		petri::iterator outPlaceIt = this->getForkUmbilicalCord(forkTransitionIt);
-		if (not outPlaceIt.valid()) { internal("", "no Copy Process umbilical cord found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
+		if (not outPlaceIt.valid()) { internal("", "ERROR: no Copy Process umbilical cord found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
 		vector<petri::iterator> outTransitionIts = this->next(outPlaceIt);
-		if (outTransitionIts.empty()) { internal("", "no Copy Process dummy tail found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
+		if (outTransitionIts.empty()) { internal("", "ERROR: no Copy Process dummy tail found for fork Transition: " + std::to_string(forkTransitionIt.index), __FILE__, __LINE__); continue; }
 		petri::iterator copyProcessDummyTailIt = outTransitionIts[0];
 
 		size_t branchCount = 0;
@@ -3388,6 +3395,7 @@ void graph::rewriteAssignmentsAsChannels(
 
 		// Prune Copy Process dummy tail
 		//this->pinch(copyProcessDuemyTailIt); //TODO(steven.kneiser): don't prune for legibility? Wouldn't this be pruned by any petri reduce()?
+		this->useDefChains.erase(copyProcessChainIdx);  // Prune now useless Use-Def w/ original CopyProc pointer
 	}
 
 
