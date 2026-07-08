@@ -2639,6 +2639,7 @@ void graph::rewriteEachSingleUseVarAsDirectChannel(
 		if (useCount != 1) { continue; }
 		VarIdx user = *users.begin();
 
+		if (not this->useDefChains.contains(dependency)) { continue; }
 		useDefChain &dependencyUseDefChain = this->useDefChains[dependency];
 		if (dependencyUseDefChain.defs.empty()) { continue; }  // no definition when dependency is a recv'd/used input-channel
 
