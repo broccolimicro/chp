@@ -23,7 +23,6 @@
 #include <parse_chp/composition.h>
 #include <parse_chp/factory.h>
 #include <parse_cog/composition.h>
-#include <parse_cog/branch.h>
 #include <parse_cog/control.h>
 #include <parse_cog/factory.h>
 
