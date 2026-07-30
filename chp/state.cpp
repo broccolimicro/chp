@@ -8,7 +8,6 @@
 #include <common/text.h>
 #include "state.h"
 #include "graph.h"
-#include "expression.h"
 
 namespace chp
 {
@@ -44,7 +43,7 @@ void term_index::hash(hasher &hash) const
 
 string term_index::to_string(const graph &g)
 {
-	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + emit_expression(g.transitions[index].guard, g) + " -> " + emit_composition(g.transitions[index].action[term], g);
+	return "T" + ::to_string(index) + "." + ::to_string(term) + ":" + g.transitions[index].guard.to_string(false, g) + " -> " + g.transitions[index].action[term].to_string(false, g);
 }
 
 bool operator<(term_index i, term_index j)
@@ -118,7 +117,7 @@ enabled_transition::~enabled_transition()
 
 string enabled_transition::to_string(const graph &g)
 {
-	return "T" + ::to_string(index) + ":" + emit_expression(g.transitions[index].guard, g) + " -> " + emit_composition(g.transitions[index].action, g);
+	return "T" + ::to_string(index) + ":" + g.transitions[index].guard.to_string(false, g) + " -> " + g.transitions[index].action.to_string(false, g);
 }
 
 bool operator<(enabled_transition i, enabled_transition j)
@@ -280,7 +279,7 @@ string state::to_string(const graph &g)
 			result += " ";
 		result += ::to_string(tokens[i].index);
 	}
-	result += "} " + emit_composition(encodings, g);
+	result += "} " + arithmetic::Parallel(encodings).to_string(false, g);
 	return result;
 }
 

@@ -1,6 +1,5 @@
 #include "simulator.h"
 #include "graph.h"
-#include "expression.h"
 #include <common/text.h>
 #include <common/message.h>
 #include <common/math.h>
@@ -421,7 +420,7 @@ int simulator::enabled(bool sorted) {
 						arithmetic::Expression exclude = base->exclusion(preload[i].index);
 						arithmetic::Expression weak = arithmetic::weakestGuard(preload[i].guard, exclude);
 						guard = guard & weak;
-						//cout << "setting token guard:" << emit_expression(base->transitions[preload[i].index].guard, *variables) << " exclude:" << emit_expression(exclude, *variables) << " weak:" << emit_expression(weak, *variables) << " result:" << emit_expression(guard, *variables) << endl;
+						//cout << "setting token guard:" << base->transitions[preload[i].index].guard.to_string(false, *variables) << " exclude:" << exclude.to_string(false, *variables) << " weak:" << weak.to_string(false, *variables) << " result:" << guard.to_string(false, *variables) << endl;
 					}
 
 					guard.minimize();
