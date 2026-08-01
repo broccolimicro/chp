@@ -3,7 +3,7 @@
 	[ !Ac | !Bc -> Sc!0,Sd!s; ci=co;
 		[ !Ac -> A? [] else -> skip ],
 		[ !Bc -> B? [] else -> skip ]
-	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
+	[] Ac & Bc & co!=ci -> Sc!0,Sd!s; ci=co
 	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; A?, B?
 	]
 ]

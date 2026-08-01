@@ -35,7 +35,7 @@ chp::graph _importCHPFromString(const string &chp_string, bool debug=false) {
 
 		// Blame parser or interpreter?
 		if (debug) { cout << syntax.to_string() << endl; }
-		chp::import_chp(g, syntax, &tokens, true);
+		parse_chp::import_chp(g, syntax, &tokens, true);
 	}
 
 	//TODO: document this deviation from tests/synthesize.cpp copy
@@ -364,7 +364,7 @@ TEST(BranchFlatten, DSAdder) {
 	[ !(#A).c | !(#B).c -> Sc!0, Sd!s; ci=co;
 		[ !(#A).c -> A? [] else -> skip ],
 		[ !(#B).c -> B? [] else -> skip ]
-	[] (#A).c & (#B).c & co~=ci -> Sc!0, Sd!s; ci=co
+	[] (#A).c & (#B).c & co!=ci -> Sc!0, Sd!s; ci=co
 	[] (#A).c & (#B).c & co==ci -> Sc!1, Sd!s; ci=0; A?, B?
 	]
 ]
@@ -375,7 +375,7 @@ TEST(BranchFlatten, DSAdder) {
 *[[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
   [] Ac & !Bc -> Sc!0,Sd!s; ci=ci; Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
   [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
-	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
+	[] Ac & Bc & co!=ci -> Sc!0,Sd!s; ci=co; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
 	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
 ]]
 		)";
@@ -392,7 +392,7 @@ TEST(BranchFlatten, LoopdyLoop) {
 			[ !Ac -> A? [] else -> skip ],
 			[ !Bc -> B? [] else -> skip ]
 		]
-	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
+	[] Ac & Bc & co!=ci -> Sc!0,Sd!s; ci=co
 	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; A?, B?
 	]
 ]
@@ -404,7 +404,7 @@ TEST(BranchFlatten, LoopdyLoop) {
 	[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?
   [] Ac & !Bc -> Sc!0,Sd!s; ci=ci; Bc?, Bd?
   [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?
-	[] Ac & Bc & co~=ci -> Sc!0,Sd!s; ci=co
+	[] Ac & Bc & co!=ci -> Sc!0,Sd!s; ci=co
 	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?
 	]
 ]
@@ -417,10 +417,10 @@ TEST(BranchFlatten, LoopdyLoop) {
 TEST(BranchFlatten, Collatz) {
 	std::string source = R"(
 *[n=N?;
-	*[n ~= 1 -> log!nope;
-		*[n ~= 1 && n < 100 ->
+	*[n != 1 -> log!nope;
+		*[n != 1 && n < 100 ->
 			[n % 2 == 0 -> log!n; n = n / 2
-			[] n % 2 ~= 0 -> log!n; n = 3 * n + 1
+			[] n % 2 != 0 -> log!n; n = 3 * n + 1
 			]
 		]
 	];
@@ -472,7 +472,7 @@ n = N?;
     i = 2;
     *[ i < n ->
         [ n % i == 0 -> isPrime = false
-        [] n % i ~= 0 -> skip
+        [] n % i != 0 -> skip
         ];
         i = i + 1
     ];
@@ -490,7 +490,7 @@ n = N?;
     i = 2;
     *[ i < n ->
         [ n % i == 0 -> isPrime = false
-        [] n % i ~= 0 -> skip
+        [] n % i != 0 -> skip
         ];
         i = i + 1
     ];
