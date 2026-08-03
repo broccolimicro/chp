@@ -338,7 +338,10 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 
 			change = false;
 			for (int j = 0; j < (int)sim.ready.size() and !change; j++) {
-				bool firable = transitions[sim.ready[j].index].action.terms.size() <= 1;
+				arithmetic::Expression guard = transitions[sim.ready[j].index].action.guard();
+				guard.minimize();
+
+				bool firable = guard.isValid();
 				for (int k = 0; k < (int)sim.ready[j].tokens.size() and firable; k++) {
 					for (int l = 0; l < (int)arcs[petri::transition::type].size() and firable; l++) {
 						if (arcs[petri::transition::type][l].to.index == sim.tokens[sim.ready[j].tokens[k]].index) {
