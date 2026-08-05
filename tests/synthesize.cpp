@@ -53,7 +53,7 @@ chp::graph importCHPFromString(const string &chp_string, bool debug=false) {
 
 		// Blame parser or interpreter?
 		if (debug) { cout << syntax.to_string() << endl; }
-		parse_chp::import_chp(g, syntax, &tokens, true);
+		chp::import_chp(g, syntax, &tokens, true);
 	}
 	return g;
 }
@@ -74,7 +74,7 @@ chp::graph importCHPFromCogString(const string &cog, bool debug=false) {
 		
 		// Blame parser or interpreter?
 		if (debug) { cout << syntax.to_string() << endl; }
-		parse_cog::import_chp(g, syntax, &tokens, true);
+		chp::import_chp(g, syntax, &tokens, true);
 	}
 	return g;
 }

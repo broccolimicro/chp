@@ -35,7 +35,7 @@ chp::graph _importCHPFromString(const string &chp_string, bool debug=false) {
 
 		// Blame parser or interpreter?
 		if (debug) { cout << syntax.to_string() << endl; }
-		parse_chp::import_chp(g, syntax, &tokens, true);
+		chp::import_chp(g, syntax, &tokens, true);
 	}
 
 	//TODO: document this deviation from tests/synthesize.cpp copy
