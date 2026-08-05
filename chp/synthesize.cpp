@@ -71,7 +71,8 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 
 	for (const arithmetic::Operand &operand : e.exprIndex()) {
 		const arithmetic::Operation &operation = *e.getExpr(operand.index);
-		if (operation.func != arithmetic::Operation::OpType::CALL) { continue; }  //TODO: other operations of interest?
+		if (operation.func != arithmetic::Operation::CALL
+			and operation.func != arithmetic::Operation::MEMBER_CALL) { continue; }  //TODO: other operations of interest?
 
 		std::string func_name = operation.operands[0].cnst.sval;
 		//TODO: optimize perf (don't do string comparison)
