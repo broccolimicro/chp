@@ -1,9 +1,0 @@
-while {
-	c = Cc.recv()
-	l = L.recv()
-	await c == 0 {
-		R0.send(l)
-	} or await c == 1 {
-		R1.send(l)
-	}
-}

@@ -1,0 +1,9 @@
+while {
+	if Cc.probe() == 0 {
+		Cc.recv()
+		R0.send(L.recv())
+	} or if Cc.probe() == 1 {
+		Cc.recv()
+		R1.send(L.recv())
+	}
+}

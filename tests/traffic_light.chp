@@ -1,5 +1,0 @@
-state = green;
-*[[ state == red -> Light!green; state = green
-  [] state == green -> Light!yellow; state = yellow
-  [] state == yellow -> Light!red; state = red
-]]

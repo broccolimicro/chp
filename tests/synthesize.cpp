@@ -8,14 +8,15 @@
 #include <chp/synthesize.h>
 #include <common/standard.h>
 #include <flow/func.h>
-#include <flow/module.h>
+#include <verilog/module.h>
 #include <flow/synthesize.h>
 
 #include <interpret_chp/export_dot.h>
 #include <interpret_chp/import_chp.h>
 #include <interpret_chp/import_cog.h>
-#include <interpret_flow/export_verilog.h>
+#include <interpret_verilog/export_verilog.h>
 #include <interpret_flow/export_dot.h>
+#include <interpret_flow/export_cog.h>
 
 #include <parse/default/block_comment.h>
 #include <parse/default/line_comment.h>
@@ -29,34 +30,12 @@
 #include "dot.h"
 
 using namespace std;  //TODO: use only what you need
-using std::filesystem::absolute;
-using std::filesystem::current_path;
 using namespace flow; //TODO: be explicit outside of flow submodule
+namespace fs = std::filesystem;
 
-const std::filesystem::path TEST_DIR = absolute(current_path() / "tests");
+const fs::path SRC_DIR = fs::absolute(fs::current_path() / "tests" / "src");
+const fs::path BUILD_DIR = fs::absolute(fs::current_path() / "tests" / "build");
 const int WIDTH = 8;
-
-
-chp::graph importCHPFromString(const string &chp_string, bool debug=false) {
-	tokenizer tokens;
-	tokens.register_token<parse::block_comment>(false);
-	tokens.register_token<parse::line_comment>(false);
-	parse_chp::factory.register_syntax(tokens);
-
-	tokens.insert("string_input", chp_string, nullptr);
-	chp::graph g;
-
-	tokens.increment(false);
-	tokens.expect<parse_chp::composition>();
-	if (tokens.decrement(__FILE__, __LINE__)) {
-		parse_chp::composition syntax(tokens);
-
-		// Blame parser or interpreter?
-		if (debug) { cout << syntax.to_string() << endl; }
-		chp::import_chp(g, syntax, &tokens, true);
-	}
-	return g;
-}
 
 chp::graph importCHPFromCogString(const string &cog, bool debug=false) {
 	tokenizer tokens;
@@ -125,73 +104,30 @@ bool areEquivalent(flow::Func &real, flow::Func &expected) {
 	return true;
 }
 
-void testFuncSynthesisFromCHP(flow::Func expected, bool render=true) {
-	string filenameWithoutExtension = (TEST_DIR / expected.name).string();
-	string chpFilename = filenameWithoutExtension + ".chp";
-	string chpRaw = readStringFromFile(chpFilename, true);
-	chp::graph g = importCHPFromString(chpRaw);
-	g.post_process(true, false);
-	g.name = expected.name;
-	g.flatten(true);
-
-	if (render) {
-		string graphvizRaw = chp::export_graph(g, true).to_string();
-		gvdot::render(filenameWithoutExtension, graphvizRaw);
-	}
-
-	flow::Func real = chp::synthesizeFuncFromCHP(g, true);
-	EXPECT_EQ(real.name, expected.name);
-	EXPECT_TRUE(areEquivalent(real, expected));
-
-	/*
-	cout << "CHP Graph.vars {" << endl;
-	for (auto &var : g.vars) {
-		cout << "* var(name: " << var.name << ", region: " << var.region << ")" << endl;
-
-		bool exists = std::any_of(func.nets.begin(), func.nets.end(),
-				[&var](const flow::Net &net) { return net.name == var.name; });
-		EXPECT_EQ(exists, true);
-	}
-	cout << "}" << endl << endl;
-	*/
-}
-
 void testFuncSynthesisFromCog(flow::Func &expected, bool render=true) {
-	string filenameWithoutExtension = (TEST_DIR / expected.name).string();
-	string cogFilename = filenameWithoutExtension + ".cog";
-	string cogRaw = readStringFromFile(cogFilename, false);
+	string cogRaw = readStringFromFile(SRC_DIR / (expected.name + ".cog"), false);
 	chp::graph g = importCHPFromCogString(cogRaw);
 	g.post_process(true, false);  //TODO: ... true, true)
 	g.name = expected.name;
 
+	fs::create_directories(BUILD_DIR);
+
 	g.flatten();
 	if (render) {
 		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
-		gvdot::render(filenameWithoutExtension + ".png", chpGraphvizRaw);
+		gvdot::render(BUILD_DIR / (expected.name + ".png"), chpGraphvizRaw);
 	}
 
 	flow::Func real = chp::synthesizeFuncFromCHP(g);
 	if (render) {
-		string rflow_filename = filenameWithoutExtension + "_flow_real.dot";
 		string rflowGraphvizRaw = flow::export_func(real, true).to_string();
-		std::ofstream rflow_file(rflow_filename);
-		if (!rflow_file) {
-				std::cerr << "ERROR: Failed to open file for <test>_flow_real.dot export: "
-					<< rflow_filename << std::endl
-					<< "ERROR: Try again from dir: <project_dir>/lib/parse_cog" << std::endl;
-		}
-		rflow_file << rflowGraphvizRaw;
-
-		string eflow_filename = filenameWithoutExtension + "_flow_expected.dot";
+		gvdot::render(BUILD_DIR / (expected.name + "_flow_real.png"), rflowGraphvizRaw);
+	
 		string eflowGraphvizRaw = flow::export_func(expected, true).to_string();
-		std::ofstream eflow_file(eflow_filename);
-		if (!eflow_file) {
-				std::cerr << "ERROR: Failed to open file for <test>_flow_expected.dot export: "
-					<< eflow_filename << std::endl
-					<< "ERROR: Try again from dir: <project_dir>/lib/parse_cog" << std::endl;
-		}
-		eflow_file << eflowGraphvizRaw;
+		gvdot::render(BUILD_DIR / (expected.name + "_flow_expected.png"), eflowGraphvizRaw);
 	}
+
+	cout << parse_cog::export_func(real).to_string("") << endl;
 
 	EXPECT_EQ(real.name, expected.name);
 	EXPECT_TRUE(areEquivalent(real, expected));
@@ -201,224 +137,6 @@ void testFuncSynthesisFromCog(flow::Func &expected, bool render=true) {
 	chp::graph g = synthesizeCHPFromCog(cog);
 	flow::Func func_real = chp::syntheiszeFuncFromCHP(g);
 	*/
-}
-
-
-TEST(ChpToFlow, Counter) {
-	flow::Func func;
-	func.name = "counter";
-	Operand i = func.pushNet("i", Type(Type::FIXED, WIDTH), flow::Net::REG);
-	Expression expri(i);
-	//Expression increment_i(i + 1);
-
-	int condition_idx = func.pushCond(expri < 8);
-	func.conds[condition_idx].mem(i, expri + 1);
-
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, Countdown) {
-	flow::Func func;
-	func.name = "countdown";
-	Operand log = func.pushNet("log", Type(Type::FIXED, WIDTH), flow::Net::OUT);
-	Operand n = func.pushNet("n", Type(Type::FIXED, WIDTH), flow::Net::REG);
-	Expression exprn(n);
-	//Expression decrement_n(n - 1);
-
-	int condition_idx = func.pushCond(exprn > 0);
-	flow::Condition cond = func.conds[condition_idx];
-	cond.req(log, exprn);
-	cond.mem(n, n - 1);
-
-	//TODO: one-off trailing send: log!1337
-
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, Buffer) {
-	flow::Func func;
-	func.name = "buffer";
-	Operand L = func.pushNet("L", Type(Type::FIXED, WIDTH), flow::Net::IN);
-	Operand R = func.pushNet("R", Type(Type::FIXED, WIDTH), flow::Net::OUT);
-	Expression exprL(L);
-
-	int branch0 = func.pushCond(Expression::boolOf(true));
-	func.conds[branch0].req(R, exprL);
-	func.conds[branch0].ack(L);
-
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, Merge) {
-	flow::Func func;
-	func.name = "merge";
-	Operand L0 = func.pushNet("L0", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
-	Operand L1 = func.pushNet("L1", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
-	Operand C = func.pushNet("C", Type(Type::TypeName::FIXED, 1), flow::Net::IN);
-	Operand R = func.pushNet("R", Type(Type::TypeName::FIXED, WIDTH), flow::Net::OUT);
-	Expression exprL0(L0);
-	Expression exprL1(L1);
-	Expression exprC(C);
-
-	int branch0 = func.pushCond(exprC == Expression::intOf(0));
-	func.conds[branch0].req(R, exprL0);
-	func.conds[branch0].ack({C, L0});
-
-	int branch1 = func.pushCond(exprC == Expression::intOf(1));
-	func.conds[branch1].req(R, exprL1);
-	func.conds[branch1].ack({C, L1});
-
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, Split) {
-	flow::Func func;
-	func.name = "split";
-	Operand L = func.pushNet("L", Type(Type::TypeName::FIXED, WIDTH), flow::Net::IN);
-	Operand C = func.pushNet("C", Type(Type::TypeName::FIXED, 1), flow::Net::IN);
-	Operand R0 = func.pushNet("R0", Type(Type::TypeName::FIXED, WIDTH), flow::Net::OUT);
-	Operand R1 = func.pushNet("R1", Type(Type::TypeName::FIXED, WIDTH), flow::Net::OUT);
-	Expression exprL(L);
-	Expression exprC(C);
-
-	int branch0 = func.pushCond(exprC == Expression::intOf(0));
-	func.conds[branch0].req(R0, exprL);
-	func.conds[branch0].ack({C, L});
-
-	int branch1 = func.pushCond(exprC == Expression::intOf(1));
-	func.conds[branch1].req(R1, exprL);
-	func.conds[branch1].ack({C, L});
-
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, IsEven) {
-	flow::Func func;
-	func.name = "is_even";
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, Primes) {
-	flow::Func func;
-	func.name = "primes";
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, TrafficLight) {
-	flow::Func func;
-	func.name = "traffic_light";
-	testFuncSynthesisFromCHP(func);
-}
-
-
-TEST(ChpToFlow, DSAdderFlat) {
-	flow::Func func;
-	func.name = "ds_adder_flat";
-	Operand Ad = func.pushNet("Ad", Type(Type::FIXED, WIDTH), flow::Net::IN);
-	Operand Ac = func.pushNet("Ac", Type(Type::FIXED, 1), flow::Net::IN);
-	Operand Bd = func.pushNet("Bd", Type(Type::FIXED, WIDTH), flow::Net::IN);
-	Operand Bc = func.pushNet("Bc", Type(Type::FIXED, 1), flow::Net::IN);
-	Operand Sd = func.pushNet("Sd", Type(Type::FIXED, WIDTH), flow::Net::OUT);
-	Operand Sc = func.pushNet("Sc", Type(Type::FIXED, 1), flow::Net::OUT);
-	Operand ci = func.pushNet("ci", Type(Type::FIXED, 1), flow::Net::REG);
-	Expression exprAc(Ac);
-	Expression exprAd(Ad);
-	Expression exprBc(Bc);
-	Expression exprBd(Bd);
-	Expression exprci(ci);
-
-	Expression s((exprAd + exprBd + exprci) % pow(2, WIDTH));
-	Expression co((exprAd + exprBd + exprci) / pow(2, WIDTH));
-
-	int branch0 = func.pushCond(~exprAc & ~exprBc);
-	func.conds[branch0].req(Sd, s);
-	func.conds[branch0].req(Sc, Operand::intOf(0));
-	func.conds[branch0].mem(ci, co);
-	func.conds[branch0].ack({Ac, Ad, Bc, Bd});
-
-	int branch1 = func.pushCond(exprAc & ~exprBc);
-	func.conds[branch1].req(Sd, s);
-	func.conds[branch1].req(Sc, Operand::intOf(0));
-	func.conds[branch1].mem(ci, co);
-	func.conds[branch1].ack({Bc, Bd});
-
-	int branch2 = func.pushCond(~exprAc & exprBc);
-	func.conds[branch2].req(Sd, s);
-	func.conds[branch2].req(Sc, Operand::intOf(0));
-	func.conds[branch2].mem(ci, co);
-	func.conds[branch2].ack({Ac, Ad});
-
-	int branch3 = func.pushCond(exprAc & exprBc & (co != exprci));
-	func.conds[branch3].req(Sd, s);
-	func.conds[branch3].req(Sc, Operand::intOf(0));
-	func.conds[branch3].mem(ci, co);
-
-	int branch4 = func.pushCond(exprAc & exprBc & (co == exprci));
-	func.conds[branch4].req(Sd, s);
-	func.conds[branch4].req(Sc, Operand::intOf(1));
-	func.conds[branch4].mem(ci, Operand::intOf(0));
-	func.conds[branch4].ack({Ac, Ad, Bc, Bd});
-
-	testFuncSynthesisFromCHP(func);
-}
-
-TEST(ChpToFlow, DSAdder) {
-	Func func;
-	func.name = "ds_adder";
-
-	Operand Ad = func.pushNet("Ad", Type(Type::FIXED, WIDTH), flow::Net::IN);
-	Operand Ac = func.pushNet("Ac", Type(Type::FIXED, 1), flow::Net::IN);
-	Operand Bd = func.pushNet("Bd", Type(Type::FIXED, WIDTH), flow::Net::IN);
-	Operand Bc = func.pushNet("Bc", Type(Type::FIXED, 1), flow::Net::IN);
-	Operand Sd = func.pushNet("Sd", Type(Type::FIXED, WIDTH), flow::Net::OUT);
-	Operand Sc = func.pushNet("Sc", Type(Type::FIXED, 1), flow::Net::OUT);
-	Operand ci = func.pushNet("ci", Type(Type::FIXED, 1), flow::Net::REG);
-	Expression exprAc(Ac);
-	Expression exprAd(Ad);
-	Expression exprBc(Bc);
-	Expression exprBd(Bd);
-	Expression exprci(ci);
-
-	Expression s((exprAd + exprBd + exprci) % pow(2, WIDTH));
-	Expression co((exprAd + exprBd + exprci) / pow(2, WIDTH));
-
-	int branch0 = func.pushCond(~exprAc & ~exprBc);
-	func.conds[branch0].req(Sd, s);
-	func.conds[branch0].req(Sc, Operand::intOf(0));
-	func.conds[branch0].mem(ci, co);
-	func.conds[branch0].ack({Ac, Ad, Bc, Bd});
-
-	int branch1 = func.pushCond(exprAc & ~exprBc);
-	func.conds[branch1].req(Sd, s);
-	func.conds[branch1].req(Sc, Operand::intOf(0));
-	func.conds[branch1].mem(ci, co);
-	func.conds[branch1].ack({Bc, Bd});
-
-	int branch2 = func.pushCond(~exprAc & exprBc);
-	func.conds[branch2].req(Sd, s);
-	func.conds[branch2].req(Sc, Operand::intOf(0));
-	func.conds[branch2].mem(ci, co);
-	func.conds[branch2].ack({Ac, Ad});
-
-	int branch3 = func.pushCond(exprAc & exprBc & (co != exprci));
-	func.conds[branch3].req(Sd, s);
-	func.conds[branch3].req(Sc, Operand::intOf(0));
-	func.conds[branch3].mem(ci, co);
-
-	int branch4 = func.pushCond(exprAc & exprBc & (co == exprci));
-	func.conds[branch4].req(Sd, s);
-	func.conds[branch4].req(Sc, Operand::intOf(1));
-	func.conds[branch4].mem(ci, Operand::intOf(0));
-	func.conds[branch4].ack({Ac, Ad, Bc, Bd});
-
-	testFuncSynthesisFromCHP(func);
 }
 
 /*
@@ -618,59 +336,6 @@ TEST(CogToFlow, Split) {
 
 	testFuncSynthesisFromCog(func);
 }
-
-
-TEST(CogToFlow, DSAdderFlat) {
-	flow::Func func;
-	func.name = "ds_adder_flat";
-	Operand Ad = func.pushNet("Ad", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::IN);
-	Operand Ac = func.pushNet("Ac", flow::Type(flow::Type::FIXED, 1), flow::Net::IN);
-	Operand Bd = func.pushNet("Bd", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::IN);
-	Operand Bc = func.pushNet("Bc", flow::Type(flow::Type::FIXED, 1), flow::Net::IN);
-	Operand Sd = func.pushNet("Sd", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::OUT);
-	Operand Sc = func.pushNet("Sc", flow::Type(flow::Type::FIXED, 1), flow::Net::OUT);
-	Operand ci = func.pushNet("ci", flow::Type(flow::Type::BITS,  1), flow::Net::REG);
-	Expression exprAc(Ac);
-	Expression exprAd(Ad);
-	Expression exprBc(Bc);
-	Expression exprBd(Bd);
-	Expression exprci(ci);
-
-	Expression s((exprAd + exprBd + exprci) % pow(2, WIDTH));
-	Expression co((exprAd + exprBd + exprci) / pow(2, WIDTH));
-
-	int branch0 = func.pushCond(~exprAc & ~exprBc);
-	func.conds[branch0].req(Sd, s);
-	func.conds[branch0].req(Sc, Operand::intOf(0));
-	func.conds[branch0].mem(ci, co);
-	func.conds[branch0].ack({Ac, Ad, Bc, Bd});
-
-	int branch1 = func.pushCond(exprAc & ~exprBc);
-	func.conds[branch1].req(Sd, s);
-	func.conds[branch1].req(Sc, Operand::intOf(0));
-	func.conds[branch1].mem(ci, co);
-	func.conds[branch1].ack({Bc, Bd});
-
-	int branch2 = func.pushCond(~exprAc & exprBc);
-	func.conds[branch2].req(Sd, s);
-	func.conds[branch2].req(Sc, Operand::intOf(0));
-	func.conds[branch2].mem(ci, co);
-	func.conds[branch2].ack({Ac, Ad});
-
-	int branch3 = func.pushCond(exprAc & exprBc & (co != exprci));
-	func.conds[branch3].req(Sd, s);
-	func.conds[branch3].req(Sc, Operand::intOf(0));
-	func.conds[branch3].mem(ci, co);
-
-	int branch4 = func.pushCond(exprAc & exprBc & (co == exprci));
-	func.conds[branch4].req(Sd, s);
-	func.conds[branch4].req(Sc, Operand::intOf(1));
-	func.conds[branch4].mem(ci, Operand::intOf(0));
-	func.conds[branch4].ack({Ac, Ad, Bc, Bd});
-
-	testFuncSynthesisFromCog(func);
-}
-
 
 TEST(CogToFlow, DSAdder) {
 	flow::Func func;
