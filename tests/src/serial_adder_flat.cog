@@ -1,0 +1,22 @@
+while {
+	if !Ac.probe() && !Bc.probe() {
+		s = Ad.probe() + Bd.probe() + ci
+		Sc.send(0) and Sd.send(s[0:4]); ci=s[4]
+		Ac.recv() and Ad.recv() and Bc.recv() and Bd.recv()
+	} or if !Ac.probe() && Bc.probe() {
+		s = Ad.probe() + Bd.probe() + ci
+		Sc.send(0) and Sd.send(s[0:4]); ci=s[4]
+		Ac.recv() and Ad.recv()
+	} or if Ac.probe() && !Bc.probe() {
+		s = Ad.probe() + Bd.probe() + ci
+		Sc.send(0) and Sd.send(s[0:4]); ci=s[4]
+		Bc.recv() and Bd.recv()
+	} or if Ac.probe() && Bc.probe() && co!=ci {
+		s = Ad.probe() + Bd.probe() + ci
+		Sc.send(0) and Sd.send(s[0:4]); ci=s[4]
+	} or if Ac.probe() && Bc.probe() && co==ci {
+		s = Ad.probe() + Bd.probe() + ci
+		Sc.send(1) and Sd.send(s[0:4]); ci=0
+		Ac.recv() and Ad.recv() and Bc.recv() and Bd.recv()
+	}
+}

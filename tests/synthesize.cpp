@@ -105,17 +105,26 @@ bool areEquivalent(flow::Func &real, flow::Func &expected) {
 }
 
 void testFuncSynthesisFromCog(flow::Func &expected, bool render=true) {
+	fs::create_directories(BUILD_DIR);
+
 	string cogRaw = readStringFromFile(SRC_DIR / (expected.name + ".cog"), false);
 	chp::graph g = importCHPFromCogString(cogRaw);
-	g.post_process(true, false);  //TODO: ... true, true)
 	g.name = expected.name;
+	if (render) {
+		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
+		gvdot::render(BUILD_DIR / (expected.name + ".png"), chpGraphvizRaw);
+	}
 
-	fs::create_directories(BUILD_DIR);
+	/*g.post_process(true, false);  //TODO: ... true, true)
+	if (render) {
+		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
+		gvdot::render(BUILD_DIR / (expected.name + "_post.png"), chpGraphvizRaw);
+	}*/
 
 	g.flatten();
 	if (render) {
 		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
-		gvdot::render(BUILD_DIR / (expected.name + ".png"), chpGraphvizRaw);
+		gvdot::render(BUILD_DIR / (expected.name + "_flattened.png"), chpGraphvizRaw);
 	}
 
 	flow::Func real = chp::synthesizeFuncFromCHP(g);
@@ -337,9 +346,9 @@ TEST(CogToFlow, Split) {
 	testFuncSynthesisFromCog(func);
 }
 
-TEST(CogToFlow, DSAdder) {
+TEST(CogToFlow, SerialAdder) {
 	flow::Func func;
-	func.name = "ds_adder";
+	func.name = "serial_adder";
 	Operand Ad = func.pushNet("Ad", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::IN);
 	Operand Ac = func.pushNet("Ac", flow::Type(flow::Type::FIXED, 1), flow::Net::IN);
 	Operand Bd = func.pushNet("Bd", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::IN);
@@ -353,33 +362,33 @@ TEST(CogToFlow, DSAdder) {
 	Expression exprBd(Bd);
 	Expression exprci(ci);
 
-	Expression s((exprAd + exprBd + exprci) % pow(2, WIDTH));
-	Expression co((exprAd + exprBd + exprci) / pow(2, WIDTH));
+	Expression s((exprAd + exprBd + exprci)(0, WIDTH-1));
+	Expression co((exprAd + exprBd + exprci)(WIDTH-1));
 
-	int branch0 = func.pushCond(~exprAc & ~exprBc);
+	int branch0 = func.pushCond(!exprAc && !exprBc);
 	func.conds[branch0].req(Sd, s);
 	func.conds[branch0].req(Sc, Operand::intOf(0));
 	func.conds[branch0].mem(ci, co);
 	func.conds[branch0].ack({Ac, Ad, Bc, Bd});
 
-	int branch1 = func.pushCond(exprAc & ~exprBc);
+	int branch1 = func.pushCond(exprAc && !exprBc);
 	func.conds[branch1].req(Sd, s);
 	func.conds[branch1].req(Sc, Operand::intOf(0));
 	func.conds[branch1].mem(ci, co);
 	func.conds[branch1].ack({Bc, Bd});
 
-	int branch2 = func.pushCond(~exprAc & exprBc);
+	int branch2 = func.pushCond(!exprAc && exprBc);
 	func.conds[branch2].req(Sd, s);
 	func.conds[branch2].req(Sc, Operand::intOf(0));
 	func.conds[branch2].mem(ci, co);
 	func.conds[branch2].ack({Ac, Ad});
 
-	int branch3 = func.pushCond(exprAc & exprBc & (co != exprci));
+	int branch3 = func.pushCond(exprAc && exprBc && (co != exprci));
 	func.conds[branch3].req(Sd, s);
 	func.conds[branch3].req(Sc, Operand::intOf(0));
 	func.conds[branch3].mem(ci, co);
 
-	int branch4 = func.pushCond(exprAc & exprBc & (co == exprci));
+	int branch4 = func.pushCond(exprAc && exprBc && (co == exprci));
 	func.conds[branch4].req(Sd, s);
 	func.conds[branch4].req(Sc, Operand::intOf(1));
 	func.conds[branch4].mem(ci, Operand::intOf(0));
@@ -387,6 +396,58 @@ TEST(CogToFlow, DSAdder) {
 
 	testFuncSynthesisFromCog(func);
 }
+
+TEST(CogToFlow, SerialAdderFlat) {
+	flow::Func func;
+	func.name = "serial_adder_flat";
+	Operand Ad = func.pushNet("Ad", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::IN);
+	Operand Ac = func.pushNet("Ac", flow::Type(flow::Type::FIXED, 1), flow::Net::IN);
+	Operand Bd = func.pushNet("Bd", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::IN);
+	Operand Bc = func.pushNet("Bc", flow::Type(flow::Type::FIXED, 1), flow::Net::IN);
+	Operand Sd = func.pushNet("Sd", flow::Type(flow::Type::FIXED, WIDTH), flow::Net::OUT);
+	Operand Sc = func.pushNet("Sc", flow::Type(flow::Type::FIXED, 1), flow::Net::OUT);
+	Operand ci = func.pushNet("ci", flow::Type(flow::Type::BITS,  1), flow::Net::REG);
+	Expression exprAc(Ac);
+	Expression exprAd(Ad);
+	Expression exprBc(Bc);
+	Expression exprBd(Bd);
+	Expression exprci(ci);
+
+	Expression s((exprAd + exprBd + exprci)(0, WIDTH-1));
+	Expression co((exprAd + exprBd + exprci)(WIDTH-1));
+
+	int branch0 = func.pushCond(!exprAc && !exprBc);
+	func.conds[branch0].req(Sd, s);
+	func.conds[branch0].req(Sc, Operand::intOf(0));
+	func.conds[branch0].mem(ci, co);
+	func.conds[branch0].ack({Ac, Ad, Bc, Bd});
+
+	int branch1 = func.pushCond(exprAc && !exprBc);
+	func.conds[branch1].req(Sd, s);
+	func.conds[branch1].req(Sc, Operand::intOf(0));
+	func.conds[branch1].mem(ci, co);
+	func.conds[branch1].ack({Bc, Bd});
+
+	int branch2 = func.pushCond(!exprAc && exprBc);
+	func.conds[branch2].req(Sd, s);
+	func.conds[branch2].req(Sc, Operand::intOf(0));
+	func.conds[branch2].mem(ci, co);
+	func.conds[branch2].ack({Ac, Ad});
+
+	int branch3 = func.pushCond(exprAc && exprBc && (co != exprci));
+	func.conds[branch3].req(Sd, s);
+	func.conds[branch3].req(Sc, Operand::intOf(0));
+	func.conds[branch3].mem(ci, co);
+
+	int branch4 = func.pushCond(exprAc && exprBc && (co == exprci));
+	func.conds[branch4].req(Sd, s);
+	func.conds[branch4].req(Sc, Operand::intOf(1));
+	func.conds[branch4].mem(ci, Operand::intOf(0));
+	func.conds[branch4].ack({Ac, Ad, Bc, Bd});
+
+	testFuncSynthesisFromCog(func);
+}
+
 
 
 /*

@@ -1,0 +1,26 @@
+while {
+	s = Ad.probe() + Bd.probe() + ci
+
+	if !Ac.probe() || !Bc.probe() || s[4]!=ci {
+		Sc.send(0) and Sd.send(s[0:4])
+		ci=co
+
+		if !Ac.probe() {
+			Ac.recv() and Ad.recv()
+		} or if Ac.probe() {
+			skip
+		} and if !Bc.probe() {
+			Bc.recv() and Bd.recv()
+		} or if Bc.probe() {
+			skip
+		}
+
+	} or if Ac.probe() && Bc.probe() && co!=ci {
+		Sc.send(1) and Sd.send(s[0:4])
+		ci=co
+	} or if Ac.probe() && Bc.probe() && co==ci {
+		Sc.send(0) and Sd.send(s[0:4])
+		ci=0
+		Ac.recv() and Ad.recv() and Bc.recv() and Bd.recv()
+	}
+}

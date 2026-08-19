@@ -65,7 +65,6 @@ void synthesizeChannelsInExpression(arithmetic::Expression &e, size_t condition_
 			size_t channel_idx = lvalueBase(e, operation.operands[1]);
 			if (channel_idx == std::numeric_limits<size_t>::max()) { continue; }
 
-			const string &channel_name = context.g.vars[channel_idx].name;
 			setPurpose(context.func.nets[channel_idx], flow::Net::IN);
 
 			operation.operands.erase(operation.operands.begin());
