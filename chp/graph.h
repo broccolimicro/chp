@@ -64,9 +64,6 @@ namespace chp
 // algorithm, it will insert nicely with the above new syntax.
 
 using petri::iterator;
-using petri::parallel;
-using petri::choice;
-using petri::sequence;
 
 //TODO(steven.kneiser): migrate named-size_t's beyond this namespace?
 typedef size_t BlockIdx;
@@ -76,39 +73,34 @@ typedef size_t VarDSAIdx;
 typedef size_t VarIdx;
 typedef size_t VarValue;
 
-struct place : petri::place
-{
-	place();
-	~place();
-
-	// inherited from petri::place
-	// vector<split_group> groups;
-
+struct place : petri::place {
 	// if true, more than one output transition from this place can be enabled
 	// simultaneously. This means that the hardware needs to make a
 	// non-deterministic decision about which one to fire. This is generally done
 	// with an arbiter.
 	bool arbiter;
 
-	static place merge(int composition, const place &p0, const place &p1);
+	place();
+	~place();
+
+	place &merge(petri::Composition composition, const place &p1);
 };
 
 ostream &operator<<(ostream &os, const place &p);
 
-struct transition : petri::transition
-{
+struct transition : petri::transition {
+	arithmetic::Expression guard;
+	arithmetic::Choice action;
+
 	transition();
 	transition(arithmetic::Expression guard, arithmetic::Choice assign=true);
 	~transition();
 
-	arithmetic::Expression guard;
-	arithmetic::Choice action;
+	transition &merge(petri::Composition composition, const transition &t1);
+	bool mergeable(petri::Composition composition, const transition &t1) const;
 
-	static transition merge(int composition, const transition &t0, const transition &t1);
-	static bool mergeable(int composition, const transition &t0, const transition &t1);
-
-	bool is_infeasible();
-	bool is_vacuous();
+	bool is_infeasible() const;
+	bool is_vacuous() const;
 };
 
 ostream &operator<<(ostream &os, const transition &t);
@@ -163,9 +155,8 @@ struct ProjectionItem {
 	//bool operator==(const ProjectionItem&) const = default;
 };
 
-struct graph : petri::graph<chp::place, chp::transition, petri::token, chp::state>
-{
-	typedef petri::graph<chp::place, chp::transition, petri::token, chp::state> super;
+struct graph : petri::graph<chp::place, chp::transition, chp::state> {
+	typedef petri::graph<chp::place, chp::transition, chp::state> super;
 
 	graph();
 	~graph();

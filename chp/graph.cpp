@@ -42,15 +42,13 @@ place::~place() {}
 
 // Merge two places and combine the predicate and effective predicate.
 // composition can be one of:
-// 1. petri::parallel
-// 2. petri::choice
-// 3. petri::sequence
+// 1. petri::Composition::PARALLEL
+// 2. petri::Composition::CHOICE
+// 3. petri::Composition::SEQUENCE
 // See haystack/lib/petri/petri/graph.h for their definitions.
-place place::merge(int composition, const place &p0, const place &p1)
-{
-	place result;
-	result.arbiter = (p0.arbiter or p1.arbiter);
-	return result;
+place &place::merge(petri::Composition composition, const place &p1) {
+	arbiter = arbiter or p1.arbiter;
+	return *this;
 }
 
 ostream &operator<<(ostream &os, const place &p) {
@@ -69,31 +67,33 @@ transition::transition(arithmetic::Expression guard, arithmetic::Choice assign) 
 
 transition::~transition() {}
 
-transition transition::merge(int composition, const transition &t0, const transition &t1) {
-	if (composition == petri::parallel or composition == petri::sequence) {
-		transition result(t0.guard & t1.guard, t0.action & t1.action);
-		result.guard.minimize();
-		return result;
-	} else if (composition == petri::choice) {
-		transition result(t0.guard | t1.guard, t0.action | t1.action);
-		result.guard.minimize();
-		return result;
+transition &transition::merge(petri::Composition composition, const transition &t1) {
+	if (composition == petri::Composition::PARALLEL or composition == petri::Composition::SEQUENCE) {
+		guard = guard & t1.guard;
+		action &= t1.action;
+		guard.minimize();
+		return *this;
+	} else if (composition == petri::Composition::CHOICE) {
+		guard = guard | t1.guard;
+		action |= t1.action;
+		guard.minimize();
+		return *this;
 	}
-	return transition();
+	internal("", "unsupported composition for chp transition merge", __FILE__, __LINE__);
+	return *this;
 }
 
-bool transition::mergeable(int composition, const transition &t0, const transition &t1)
-{
-	return true;
+bool transition::mergeable(petri::Composition composition, const transition &t1) const {
+	return composition == petri::Composition::CHOICE
+		or composition == petri::Composition::PARALLEL
+		or composition == petri::Composition::SEQUENCE;
 }
 
-bool transition::is_infeasible()
-{
+bool transition::is_infeasible() const {
 	return guard.isNull() or action.isInfeasible();
 }
 
-bool transition::is_vacuous()
-{
+bool transition::is_vacuous() const {
 	return guard.isConstant() and action.isVacuous();
 }
 
@@ -466,7 +466,7 @@ void graph::post_process(bool proper_nesting, bool aggressive) {
 			if (transitions[i.index].action.isVacuous() and (p.size() <= 1u or n.size() <= 1u)) {
 				vector<petri::iterator> nn = next(n); // transitions
 				for (int l = 0; l < (int)nn.size(); l++) {
-					transitions[nn[l].index] = transition::merge(petri::sequence, transitions[i.index], transitions[nn[l].index]);
+					transitions[nn[l].index] = transition::merge(petri::Composition::SEQUENCE, transitions[i.index], transitions[nn[l].index]);
 				}
 
 				cout << "pinching vacuous action " << i << endl;
@@ -708,9 +708,7 @@ void graph::expand() {
 void graph::flatten(bool debug) {
 	if (debug) { cout << "¿Yµ wWµøT? " << this->name << endl; }
 
-	if (!this->split_groups_ready) {
-		this->compute_split_groups();
-	}
+	petri::CompositionAnalysis comp(adjacency());
 
 	// Index of places w/ multiple outputs -> Indices of their output transitions
 	std::map<size_t, std::set<size_t>> split_places;
@@ -823,8 +821,6 @@ void graph::flatten(bool debug) {
 	}
 
 	//TODO: replace indices w/ iterators
-	// Identify most dominant split
-	auto dominance(this->split_dominance());
 	//TODO: compute dominance can be handled in a helper (e.g. this->compute_dominance() & this->dominance_ready w/ dominance relation AND dominance frontiers)
 	//TODO: max(in_degree) feels more proper, but is this sufficient?
 	int most_dominant_split_place = -1;  //TODO: replace with proper petri::iterator
@@ -1059,11 +1055,7 @@ void graph::flatten(bool debug) {
 	}
 	if (debug) { cout << endl; }
 
-	// Recompute split groups after flattening
-	//this->mark_modified();
 	this->post_process(true, false);
-	this->split_groups_ready = false;
-	this->compute_split_groups();
 
 	if (debug) { cout << "¡Yµ wWµøT!" << endl << endl; }
 }
@@ -1071,12 +1063,14 @@ void graph::flatten(bool debug) {
 bool graph::isFlat() const {
 	//TODO: cache result for rapid look-up in chp::graph
 
+	petri::CompositionAnalysis comp(adjacency());
+
 	// Collect subset of places that have either
 	// multiple inputs or multiple outputs
 	set<petri::iterator> multi_places;  // Multiple inputs
 	for (petri::iterator place_it : this->get_places()) {
 		if (this->super::in(place_it).size() > 1
-				|| this->super::out(place_it).size() > 1) {
+				or this->super::out(place_it).size() > 1) {
 			multi_places.insert(place_it);
 		}
 	}
@@ -1086,7 +1080,7 @@ bool graph::isFlat() const {
 	for (petri::iterator a : multi_places) {
 		for (petri::iterator b : multi_places) {
 			if (a != b
-					&& !this->super::is(petri::composition::parallel, a, b, true, true)) {
+					and not comp.is(petri::Composition::PARALLEL, a, b, true, true)) {
 				return false;
 			}
 		}
@@ -1530,7 +1524,6 @@ void graph::increaseBlockVarToDSAIndex(BlockIdx blockIdx, VarIdx varIdx, VarDSAI
 
 	// Insert copy-assignment after the block's last transition
 	this->super::erase_arc(outboundArc);
-	//this->super::mark_modified();  //TODO: required by petri? not used in insert_after...
 
 	petri::iterator newCopyAssignmentTransitionIt(petri::transition::type, newTransitionIdx);
 	this->super::connect(newCopyAssignmentTransitionIt, mergePlace);

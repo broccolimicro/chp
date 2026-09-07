@@ -27,6 +27,9 @@
 #include <parse_cog/control.h>
 #include <parse_cog/factory.h>
 
+#include <petri/tree.h>
+#include <petri/synthesize.h>
+
 #include "dot.h"
 
 using namespace std;  //TODO: use only what you need
@@ -115,11 +118,22 @@ void testFuncSynthesisFromCog(flow::Func &expected, bool render=true) {
 		gvdot::render(BUILD_DIR / (expected.name + ".png"), chpGraphvizRaw);
 	}
 
-	/*g.post_process(true, false);  //TODO: ... true, true)
+	g.post_process(true, false);  //TODO: ... true, true)
 	if (render) {
 		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
 		gvdot::render(BUILD_DIR / (expected.name + "_post.png"), chpGraphvizRaw);
-	}*/
+	}
+
+	petri::graph<chp::place, controlflow::Tree<chp::transition>, chp::state> t;
+	EXPECT_TRUE(graph_to_tree(t, g));
+	t.print();
+	for (size_t i = 0; i < t.transitions.size(); i++) {
+		if (not t.transitions.is_valid(i)) continue;
+
+		printf("T%d: ", (int)i);
+		t.transitions[i].print();
+		printf("\n");
+	}
 
 	g.flatten();
 	if (render) {
