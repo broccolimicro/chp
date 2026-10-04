@@ -462,6 +462,25 @@ TEST(CogToFlow, SerialAdderFlat) {
 	testFuncSynthesisFromCog(func);
 }
 
+TEST(CogToFlow, Instance) {
+	flow::Func func;
+	func.name = "instance";
+	Operand L0 = func.pushNet("L0", flow::Type(flow::Type::TypeName::FIXED, WIDTH), flow::Net::IN);
+	Operand L1 = func.pushNet("L1", flow::Type(flow::Type::TypeName::FIXED, WIDTH), flow::Net::IN);
+	Operand R = func.pushNet("R", flow::Type(flow::Type::TypeName::FIXED, WIDTH), flow::Net::OUT);
+	Operand M = func.pushNet("M", flow::Type(flow::Type::TypeName::FIXED, WIDTH), flow::Net::WIRE);
+	Expression expr_L0(L0);
+	Expression expr_L1(L1);
+	Expression expr_M(M);
+
+	int branch0 = func.pushCond(Expression::boolOf(true));
+	func.conds[branch0].req(R, arithmetic::call("myFunc", {expr_M}));
+	func.conds[branch0].ack({M});
+
+	func.inst.push_back(flow::Instance("myProcess", {expr_L0, expr_L1, expr_M}));
+
+	testFuncSynthesisFromCog(func);
+}
 
 
 /*

@@ -28,7 +28,7 @@ struct SynthesisContext {
 };
 
 void setPurpose(flow::Net &net, flow::Net::Purpose purpose) {
-	if (net.purpose == flow::Net::NONE) {
+	if (net.purpose == flow::Net::WIRE) {
 		net.purpose = purpose;
 	} else if (net.purpose != purpose) {
 		error("", "conflicting usage of channel '" + net.name + "'", __FILE__, __LINE__);
