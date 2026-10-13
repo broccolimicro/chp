@@ -1,0 +1,4 @@
+while {
+	R.send(myFunc(M.recv()))
+} and myProcess(L0, L1, M)
+
