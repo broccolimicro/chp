@@ -1,86 +1,44 @@
-#include <filesystem>
-
 #include <gtest/gtest.h>
 
-#include <chp/graph.h>
-//#include <common/standard.h>
-#include <interpret_chp/export_dot.h>
-#include <interpret_chp/import_chp.h>
-#include <parse/default/block_comment.h>
-#include <parse/default/line_comment.h>
-#include <parse/tokenizer.h>
-#include <parse_chp/composition.h>
-#include <parse_chp/factory.h>
-
+#include "support.h"
 #include "dot.h"
+
+#include <chp/synthesize.h>
+#include <interpret_chp/export_dot.h>
+#include <interpret_flow/export_dot.h>
 
 using std::filesystem::absolute;
 using std::filesystem::current_path;
 
-const std::filesystem::path TEST_DIR = absolute(current_path() / "tests");
-
-chp::graph _importCHPFromString(const string &chp_string, bool debug=false) {
-	tokenizer tokens;
-	tokens.register_token<parse::block_comment>(false);
-	tokens.register_token<parse::line_comment>(false);
-	parse_chp::factory.register_syntax(tokens);
-
-	tokens.insert("string_input", chp_string, nullptr);
-	chp::graph g;
-
-	tokens.increment(false);
-	tokens.expect<parse_chp::composition>();
-	if (tokens.decrement(__FILE__, __LINE__)) {
-		parse_chp::composition syntax(tokens);
-
-		// Blame parser or interpreter?
-		if (debug) { cout << syntax.to_string() << endl; }
-		chp::import_chp(g, syntax, &tokens, true);
-	}
-
-	//TODO: document this deviation from tests/synthesize.cpp copy
-	//if (!debug) {
-	g.post_process(true, false);
-	//}
-	return g;
-}
-
-
-bool testBranchFlatten(const string &source, const string &target, bool render=true, bool post_process=false) {
-	chp::graph targetGraph = _importCHPFromString(target);
-	chp::graph sourceGraph = _importCHPFromString(source);
+void testBranchFlatten(const string &source, const string &target, bool debug=false) {
+	chp::graph targetGraph = importCHPFromString("", target);
+	chp::graph sourceGraph = importCHPFromString("", source);
 
 	const ::testing::TestInfo* const test_info =
 			::testing::UnitTest::GetInstance()->current_test_info();
 	std::string test_suite_name = test_info->test_suite_name();
 	std::string test_name = test_info->name();
 
-	if (post_process) {
-		sourceGraph.post_process(true, false);
-		targetGraph.post_process(true, false);
-	}
-
-	if (render) {
-		string filenameWithoutExtension = (TEST_DIR / ("_in_" + test_name)).string();
+	if (debug) {
+		string filenameWithoutExtension = (BUILD_DIR / ("_in_" + test_name)).string();
 		string graphvizRaw = chp::export_graph(sourceGraph, true).to_string();
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 
-		filenameWithoutExtension = (TEST_DIR / ("_out_" + test_name)).string();
+		filenameWithoutExtension = (BUILD_DIR / ("_out_" + test_name)).string();
 		graphvizRaw = chp::export_graph(targetGraph, true).to_string();
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 	}
 
-	sourceGraph.flatten(true);
-	if (post_process) { sourceGraph.post_process(true, false); }
-	if (render) {
-		string filenameWithoutExtension = (TEST_DIR / ("_mid_" + test_name)).string();
+	sourceGraph.flatten(debug);
+	if (debug) {
+		string filenameWithoutExtension = (BUILD_DIR / ("_mid_" + test_name)).string();
 		string graphvizRaw = chp::export_graph(sourceGraph, true).to_string();
 		gvdot::render(filenameWithoutExtension, graphvizRaw);
 	}
 
 	//EXPECT_EQ(sourceGraph, targetGraph); //TODO: needs comparison operator
 	//return false;
-	return sourceGraph.isFlat();
+	EXPECT_TRUE(sourceGraph.isFlat()) << "resulting graph not flat";
 }
 
 
@@ -100,7 +58,7 @@ TEST(BranchFlatten, Merge) {
 ]]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -120,7 +78,7 @@ TEST(BranchFlatten, Split) {
 ]]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -149,7 +107,7 @@ TEST(BranchFlatten, Decoder2) {
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -194,7 +152,7 @@ TEST(BranchFlatten, Decoder3) {
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -239,7 +197,7 @@ TEST(BranchFlatten, Decoder3E) {
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -316,7 +274,7 @@ TEST(BranchFlatten, Decoder4) {
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -353,7 +311,7 @@ TEST(BranchFlatten, Counter) {
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -380,7 +338,7 @@ TEST(BranchFlatten, DSAdder) {
 ]]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -410,7 +368,7 @@ TEST(BranchFlatten, LoopdyLoop) {
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -435,7 +393,7 @@ TEST(BranchFlatten, Collatz) {
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -460,7 +418,7 @@ i = 0;
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -501,7 +459,7 @@ n = N?;
 ]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -528,7 +486,7 @@ TEST(BranchFlatten, Arbiter) {
 ]]
 		)";
 
-	EXPECT_TRUE(testBranchFlatten(source, target));
+	testBranchFlatten(source, target);
 }
 
 
@@ -561,7 +519,7 @@ TEST(BranchFlatten, Arbiter) {
 //]
 //		)";
 //
-//	EXPECT_TRUE(testBranchFlatten(source, target));
+//	testBranchFlatten(source, target);
 //}
 //
 //
@@ -590,7 +548,7 @@ TEST(BranchFlatten, Arbiter) {
 //]
 //		)";
 //
-//	EXPECT_TRUE(testBranchFlatten(source, target));
+//	testBranchFlatten(source, target);
 //}
 //
 //
@@ -623,7 +581,7 @@ TEST(BranchFlatten, Arbiter) {
 //]
 //		)";
 //
-//	EXPECT_TRUE(testBranchFlatten(source, target));
+//	testBranchFlatten(source, target);
 //}
 
 

@@ -15,11 +15,14 @@
 #include <parse/tokenizer.h>
 #include <parse_cog/composition.h>
 #include <parse_cog/factory.h>
+#include <parse_chp/composition.h>
+#include <parse_chp/factory.h>
 
 #include <interpret_flow/export_dot.h>
 #include <interpret_flow/export_cog.h>
 #include <interpret_chp/export_dot.h>
 #include <interpret_chp/import_cog.h>
+#include <interpret_chp/import_chp.h>
 
 #include "dot.h"
 
@@ -48,13 +51,46 @@ std::string readStringFromFile(std::string path, bool stripNewlines) {
 	return result;
 }
 
-chp::graph importCHPFromCogString(std::string name, std::string cog, bool debug) {
+chp::graph importCHPFromString(std::string name, std::string source, bool debug) {
+	tokenizer tokens;
+	tokens.register_token<parse::block_comment>(false);
+	tokens.register_token<parse::line_comment>(false);
+	parse_chp::factory.register_syntax(tokens);
+
+	tokens.insert("string_input", source, nullptr);
+	chp::graph g;
+
+	tokens.increment(false);
+	tokens.expect<parse_chp::composition>();
+	if (tokens.decrement(__FILE__, __LINE__)) {
+		parse_chp::composition syntax(tokens);
+
+		// Blame parser or interpreter?
+		if (debug) { cout << syntax.to_string() << endl; }
+		chp::import_chp(g, syntax, &tokens, true);
+	}
+	g.name = name;
+	if (debug) {
+		fs::create_directories(BUILD_DIR);
+		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
+		gvdot::render(BUILD_DIR / (name + ".png"), chpGraphvizRaw);
+	}
+
+	g.post_process(true, false);
+	if (debug) {
+		std::string chpGraphvizRaw = chp::export_graph(g, true).to_string();
+		gvdot::render(BUILD_DIR / (name + "_post.png"), chpGraphvizRaw);
+	}
+	return g;
+}
+
+chp::graph importCHPFromCogString(std::string name, std::string source, bool debug) {
 	tokenizer tokens;
 	tokens.register_token<parse::block_comment>(false);
 	tokens.register_token<parse::line_comment>(false);
 	parse_cog::factory.register_syntax(tokens);
 
-	tokens.insert("string_input", cog, nullptr);
+	tokens.insert("string_input", source, nullptr);
 	chp::graph g;
 
 	tokens.increment(false);
