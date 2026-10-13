@@ -1,140 +1,13 @@
-#include <algorithm>
-#include <filesystem>
-#include <fstream>
-
 #include <gtest/gtest.h>
 
-#include <chp/graph.h>
-#include <chp/synthesize.h>
-#include <common/standard.h>
-#include <flow/func.h>
-#include <verilog/module.h>
-#include <flow/synthesize.h>
-
-#include <interpret_chp/export_dot.h>
-#include <interpret_chp/import_chp.h>
-#include <interpret_chp/import_cog.h>
-#include <interpret_verilog/export_verilog.h>
-#include <interpret_flow/export_dot.h>
-#include <interpret_flow/export_cog.h>
-
-#include <parse/default/block_comment.h>
-#include <parse/default/line_comment.h>
-#include <parse/tokenizer.h>
-#include <parse_chp/composition.h>
-#include <parse_chp/factory.h>
-#include <parse_cog/composition.h>
-#include <parse_cog/control.h>
-#include <parse_cog/factory.h>
-
-#include <petri/tree.h>
-#include <petri/synthesize.h>
-
+#include "support.h"
 #include "dot.h"
 
-using namespace std;  //TODO: use only what you need
-using namespace flow; //TODO: be explicit outside of flow submodule
-namespace fs = std::filesystem;
+#include <chp/synthesize.h>
+#include <interpret_chp/export_dot.h>
+#include <interpret_flow/export_dot.h>
 
-const fs::path SRC_DIR = fs::absolute(fs::current_path() / "tests" / "src");
-const fs::path BUILD_DIR = fs::absolute(fs::current_path() / "tests" / "build");
 const int WIDTH = 8;
-
-string readStringFromFile(const string &absolute_filename, bool strip_newlines=false) {
-	ifstream in(absolute_filename, ios::in | ios::binary);
-	EXPECT_NO_THROW({
-		if (!in) throw std::runtime_error("Failed to open file: " + absolute_filename);
-	});
-
-	ostringstream contents;
-	contents << in.rdbuf();
-	string result = contents.str();
-
-	// Replace all newlines with spaces
-	if (strip_newlines) {
-		 replace(result.begin(), result.end(), '\n', ' ');
-		 replace(result.begin(), result.end(), '\r', ' '); // for Windows files
-	}
-
-	return result;
-}
-
-chp::graph importCHPFromCogString(const string &name, const string &cog, bool debug=false) {
-	tokenizer tokens;
-	tokens.register_token<parse::block_comment>(false);
-	tokens.register_token<parse::line_comment>(false);
-	parse_cog::factory.register_syntax(tokens);
-
-	tokens.insert("string_input", cog, nullptr);
-	chp::graph g;
-
-	tokens.increment(false);
-	tokens.expect<parse_cog::composition>();
-	if (tokens.decrement(__FILE__, __LINE__)) {
-		parse_cog::composition syntax(tokens);
-		
-		// Blame parser or interpreter?
-		if (debug) { cout << syntax.to_string() << endl; }
-		chp::import_chp(g, syntax, &tokens, true);
-	}
-	g.name = name;
-	if (debug) {
-		fs::create_directories(BUILD_DIR);
-		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
-		gvdot::render(BUILD_DIR / (name + ".png"), chpGraphvizRaw);
-	}
-
-	g.post_process(true, false);
-	if (debug) {
-		string chpGraphvizRaw = chp::export_graph(g, true).to_string();
-		gvdot::render(BUILD_DIR / (name + "_post.png"), chpGraphvizRaw);
-	}
-	return g;
-}
-
-template <typename T>
-auto to_unordered_multiset = [](const std::vector<T>& v) {
-    return std::multiset<T>(v.begin(), v.end());
-};
-
-void expectProperNesting(const chp::graph &g, bool debug=false) {
-	petri::graph<chp::place, controlflow::Tree<chp::transition>, chp::state> t;
-	EXPECT_TRUE(graph_to_tree(t, g));
-	if (debug) {
-		t.print();
-		for (size_t i = 0; i < t.transitions.size(); i++) {
-			if (not t.transitions.is_valid(i)) continue;
-
-			printf("T%d: ", (int)i);
-			t.transitions[i].print();
-			printf("\n");
-		}
-	}
-}
-
-void expectEq(flow::Func &real, const flow::Func &expected) {
-	EXPECT_EQ(real.name, expected.name);
-
-	EXPECT_EQ(real.nets.size(), expected.nets.size());
-	auto real_nets = to_unordered_multiset<flow::Net>(real.nets);
-	auto expected_nets = to_unordered_multiset<flow::Net>(expected.nets);
-	EXPECT_EQ(real_nets, expected_nets); 
-
-	// DESIGN(edward.bingham) comparing the conditions is better handled with a
-	// line diff to avoid issues regarding different uids for the same variable
-	// between the two functions.
-
-	//EXPECT_EQ(real.conds.size(), expected.conds.size());
-	//auto real_conds = to_unordered_multiset<flow::Condition>(real.conds);
-	//auto expected_conds = to_unordered_multiset<flow::Condition>(expected.conds);
-	//EXPECT_EQ(real_conds, expected_conds);
-
-	std::string realStr = parse_cog::export_func(real).to_string("");
-	std::string expectedStr = parse_cog::export_func(expected).to_string("");
-
-	auto diff = lineDiff(realStr, expectedStr);
-	EXPECT_TRUE(isMatch(diff)) << diff;
-}
 
 void testFuncSynthesisFromCog(const flow::Func &expected, bool debug=false) {
 	std::string cogRaw = readStringFromFile(SRC_DIR / (expected.name + ".cog"), false);
@@ -479,7 +352,6 @@ TEST(CogToFlow, Instance) {
 
 	testFuncSynthesisFromCog(expected);
 }
-
 
 /*
 TEST(CogToFlow, WCHB1B) {
