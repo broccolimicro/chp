@@ -207,7 +207,7 @@ struct graph : petri::graph<chp::place, chp::transition, chp::state> {
 	void expand();
 	void flatten(bool debug=false);
 	bool isFlat() const;  //TODO: cache in property for quick look-up
-	void post_process(bool proper_nesting=false, bool aggressive=false);
+	void post_process(bool proper_nesting=true, bool aggressive=false, bool debug=false);
 
 	struct controlFlowBlock {
 		BlockIdx uid;  //TODO(steven.kneiser): s/uid/blockIdx

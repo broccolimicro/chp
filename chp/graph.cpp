@@ -324,7 +324,7 @@ Mapping<petri::iterator> graph::merge(graph g) {
 }
 
 
-void graph::post_process(bool proper_nesting, bool aggressive) {
+void graph::post_process(bool proper_nesting, bool aggressive, bool debug) {
 	// Handle Reset Behavior
 
 	bool change = true;
