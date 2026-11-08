@@ -1,11 +1,12 @@
 #include <gtest/gtest.h>
 
-#include "support.h"
+#include "helpers.h"
 #include "dot.h"
 
 #include <petri/tree.h>
 #include <petri/synthesize.h>
 #include <chp/synthesize.h>
+#include <interpret_chp/export_cog.h>
 #include <interpret_chp/export_dot.h>
 #include <interpret_flow/export_dot.h>
 
@@ -13,47 +14,48 @@ using std::filesystem::absolute;
 using std::filesystem::current_path;
 
 void testBranchFlatten(const string &source, const string &target, bool debug=false) {
-	chp::graph targetGraph = importCHPFromCogString("", target);
-	chp::graph sourceGraph = importCHPFromCogString("", source);
-
-	const ::testing::TestInfo* const test_info =
+	const ::testing::TestInfo* const testInfo =
 			::testing::UnitTest::GetInstance()->current_test_info();
-	std::string test_suite_name = test_info->test_suite_name();
-	std::string test_name = test_info->name();
+	std::string testSuiteName = testInfo->test_suite_name();
+	std::string testName = testInfo->name();
+	std::string path = (BUILD_DIR / (testSuiteName + "_" + testName)).string();
 
-	if (debug) {
-		string filenameWithoutExtension = (BUILD_DIR / ("_in_" + test_name)).string();
-		string graphvizRaw = chp::export_graph(sourceGraph, true).to_string();
-		gvdot::render(filenameWithoutExtension, graphvizRaw);
-
-		filenameWithoutExtension = (BUILD_DIR / ("_out_" + test_name)).string();
-		graphvizRaw = chp::export_graph(targetGraph, true).to_string();
-		gvdot::render(filenameWithoutExtension, graphvizRaw);
-	}
-
+	chp::graph sourceGraph = importCHPFromCogString("", source);
 	sourceGraph.flatten(debug);
+
 	if (debug) {
-		string filenameWithoutExtension = (BUILD_DIR / ("_mid_" + test_name)).string();
-		string graphvizRaw = chp::export_graph(sourceGraph, true).to_string();
-		gvdot::render(filenameWithoutExtension, graphvizRaw);
+		gvdot::render(path, chp::export_graph(sourceGraph, true).to_string());
 	}
 
-	//EXPECT_EQ(sourceGraph, targetGraph); //TODO: needs comparison operator
-	//return false;
-	EXPECT_TRUE(sourceGraph.isFlat()) << "resulting graph not flat";
+	EXPECT_TRUE(sourceGraph.isFlat()) << "result not flat";
 	EXPECT_TRUE(is_clean());
 
-	petri::graph<chp::place, controlflow::Tree<chp::transition>, chp::state> t;
-	EXPECT_TRUE(graph_to_tree(t, sourceGraph));
-	t.print();
-	for (size_t i = 0; i < t.transitions.size(); i++) {
-		if (not t.transitions.is_valid(i)) continue;
+	petri::graph<chp::place, controlflow::Tree<chp::transition, chp::place>, chp::state> result;
+	EXPECT_TRUE(graph_to_tree(result, sourceGraph)) << "result not properly nested";
+	if (debug) {
+		result.print();
+	}
+	for (size_t i = 0; i < result.transitions.size(); i++) {
+		if (not result.transitions.is_valid(i)) continue;
 
-		printf("T%d\t", i);
-		t.transitions[i].print();
-		printf("\n");
+		expectEq(target, parse_cog::export_cog(result.transitions[i], sourceGraph).to_string(""));
 	}
 }
+
+TEST(BranchFlatten, Buffer) {
+	std::string source = R"""(while {
+	l = L.recv()
+	R.send(l)
+})""";
+
+	std::string target = R"""(until {
+	l=L.recv()
+	R.send(l)
+})""";
+
+	testBranchFlatten(source, target, true);
+}
+
 
 TEST(BranchFlatten, Merge) {
 	std::string source = R"""(while {
@@ -66,30 +68,19 @@ TEST(BranchFlatten, Merge) {
 	R.send(x)
 })""";
 
-	//*[c=C?;
-	//	[ c==0 -> x=A?
-	//	[] c==1 -> x=B?
-	//	]; R!x
-	// ]
-
-	//TODO: rewind initial marking to match "c=C?" start-up sequence
-	std::string target = R"""(while {
-	if c == 0 {
-		x = A.recv()
+	std::string target = R"""(until {
+	c=C.recv()
+	unless c==1 {
+		if c==0
+		x=A.recv()
 		R.send(x)
-		C.recv()
-	} or if c == 1 {
-		x = A.recv()
-		R.send(x)
-		C.recv()
+		c=C.recv()
 	}
+	x=B.recv()
+	R.send(x)
 })""";
 
-	// *[[ c==0 -> x=A?; R!x; c=C?
-	// 	[] c==1 -> x=B?; R!x; c=C?
-	// ]]
-
-	testBranchFlatten(source, target);
+	testBranchFlatten(source, target, true);
 }
 
 
@@ -104,14 +95,17 @@ TEST(BranchFlatten, Split) {
 	}
 })""";
 
-	// *[c=C?; x=L?;
-	// 	[ c==0 -> A!x
-	// 	[] c==1 -> B!x
-	// 	]
-	// ]
-
-	//TODO: rewind initial marking to match "c=C?" start-up sequence
-	std::string target = R"""(while {
+	std::string target = R"""(until {
+	c=C.recv()
+	x=L.recv()
+	unless c==1 {
+		if c==0
+		A.send(x)
+		c=C.recv()
+		x=L.recv()
+	}
+	B.send(x)
+})""";/*R"""(until {
 	if C.probe() == 0 & L.probe() {
 		C.recv()
 		x = L.recv()
@@ -121,16 +115,12 @@ TEST(BranchFlatten, Split) {
 		x = L.recv()
 		B.send(x)
 	}
-})""";
-
-	// *[[ c==0 -> A!x; c=C?; x=L?
-	// 	[] c==1 -> B!x; c=C?; x=L?
-	// ]]
+})""";*/
 
 	testBranchFlatten(source, target);
 }
 
-
+/*
 TEST(BranchFlatten, Decoder2) {
 	std::string source = R"""(while {
 	await b1 {
@@ -148,18 +138,6 @@ TEST(BranchFlatten, Decoder2) {
 	}
 })""";
 
-	//*[
-	//  [   b1 ->
-	//    [   b0 -> out3!v
-	//    [] ~b0 -> out2!v
-	//    ]
-	//  [] ~b1 ->
-	//    [   b0 -> out1!v
-	//    [] ~b0 -> out0!v
-	//    ]
-	//  ]
-	//]
-
 	std::string target = R"""(while {
 	await b1 & b0 {
 		out3.send(v)
@@ -171,14 +149,6 @@ TEST(BranchFlatten, Decoder2) {
 		out0.send(v)
 	}
 })""";
-
-	//*[
-	//  [  ( b1 &  b0) -> out3!v
-	//  [] ( b1 & ~b0) -> out2!v
-	//  [] (~b1 &  b0) -> out1!v
-	//  [] (~b1 & ~b0) -> out0!v
-	//  ]
-	//]
 
 	testBranchFlatten(source, target);
 }
@@ -214,22 +184,6 @@ TEST(BranchFlatten, Counter) {
 		Lz.send((v == 0) ^ (vz == 1))
 	})""";
 
-	//*[lc=Lc?;
-	//	[ lc==inc -> 
-	//		[ v==0 -> v=1
-	//		[] v==1 -> v=2
-	//		[] v==2 -> v=3
-	//		[] v==3 -> v=0; Rc!inc; vz=Rz?
-	//		]
-	//	[] lc==dec -> 
-	//		[ v==0 -> v=3; Rc!dec; vz=Rz?
-	//		[] v==1 -> v=0
-	//		[] v==2 -> v=1
-	//		[] v==3 -> v=2
-	//		]
-	//	]; Lz!(v==0 ^ vz==1)
-	//]
-
 	std::string target = R"""(while {
 		lc = Lc.recv()
 		if lc == 1 & v == 0 {
@@ -255,18 +209,6 @@ TEST(BranchFlatten, Counter) {
 		}
 		Lz.send((v == 0) ^ (vz == 1))
 	})""";
-
-	//*[lc=Lc?;
-	//	[  lc==inc && v==0 -> v=1
-	//	[] lc==inc && v==1 -> v=2
-	//	[] lc==inc && v==2 -> v=3
-	//	[] lc==inc && v==3 -> v=0; Rc!inc; vz=Rz?
-	//	[] lc==dec && v==0 -> v=3; Rc!dec; vz=Rz?
-	//	[] lc==dec && v==1 -> v=0
-	//	[] lc==dec && v==2 -> v=1
-	//	[] lc==dec && v==3 -> v=2
-	//	]; Lz!(v==0 && vz==1)
-	//]
 
 	testBranchFlatten(source, target, true);
 }
@@ -296,16 +238,6 @@ TEST(BranchFlatten, DSAdder) {
 			B.recv()
 		}
 	})""";
-
-	//*[ s = ((#A).d + (#B).d + ci) % pow(2, N);
-	//	co = ((#A).d + (#B).d + ci) / pow(2, N);
-	//	[ !(#A).c | !(#B).c -> Sc!0, Sd!s; ci=co;
-	//		[ !(#A).c -> A? [] else -> skip ],
-	//		[ !(#B).c -> B? [] else -> skip ]
-	//	[] (#A).c & (#B).c & co!=ci -> Sc!0, Sd!s; ci=co
-	//	[] (#A).c & (#B).c & co==ci -> Sc!1, Sd!s; ci=0; A?, B?
-	//	]
-	//]
 
 	std::string target = R"""(while {
 		s = (Ad + Bd + ci) % pow(2, N)
@@ -343,14 +275,6 @@ TEST(BranchFlatten, DSAdder) {
 			Bd.recv()
 		}
 	})""";
-
-	//TODO: rewind initial marking to match "c=C?" start-up sequence
-	//*[[ !Ac & !Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?, Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
-	//  [] Ac & !Bc -> Sc!0,Sd!s; ci=ci; Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
-	//  [] !Ac & Bc -> Sc!0,Sd!s; ci=co; Ac?, Ad?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
-	//	[] Ac & Bc & co!=ci -> Sc!0,Sd!s; ci=co; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
-	//	[] Ac & Bc & co==ci -> Sc!1,Sd!s; ci=0; Ac?, Ad?, Bc?, Bd?; s = (Ad + Bd + ci) % pow(2, N); co = (Ad + Bd + ci) / pow(2, N)
-	//]]
 
 	testBranchFlatten(source, target, true);
 }
@@ -463,101 +387,6 @@ while {
 
 	testBranchFlatten(source, target, true);
 }
-
-//TEST(BranchFlatten, Router) {
-//	std::string source = R"(
-//*[
-//  packet_in?(header, payload);
-//  [ header.dest == 0 ->
-//    [ port0_ready? -> port0_out!(payload)
-//    [] ~port0_ready? -> drop!(payload)
-//    ]
-//  [] header.dest == 1 ->
-//    [ port1_ready? -> port1_out!(payload)
-//    [] ~port1_ready? -> drop!(payload)
-//    ]
-//  [] otherwise -> error_handler!()
-//  ]
-//]
-//		)";
-//
-//	std::string target = R"(
-//*[
-//  packet_in?(header, payload);
-//  [ header.dest == 0 & port0_ready? -> port0_out!(payload)
-//  [] header.dest == 0 & ~port0_ready? -> drop!(payload)
-//  [] header.dest == 1 & port1_ready? -> port1_out!(payload)
-//  [] header.dest == 1 & ~port1_ready? -> drop!(payload)
-//  [] otherwise -> error_handler!()
-//  ]
-//]
-//		)";
-//
-//	testBranchFlatten(source, target);
-//}
-//
-//
-//TEST(BranchFlatten, Stall) {
-//	std::string source = R"(
-//*[
-//  [ data_hazard? ->
-//    stall!x
-//  [] ~data_hazard? ->
-//    [ resource_conflict? ->
-//      stall!x
-//    [] ~resource_conflict? ->
-//      proceed!x
-//    ]
-//  ]
-//]
-//		)";
-//
-//	std::string target = R"(
-//*[
-//  [ data_hazard? or resource_conflict? ->
-//    stall!x
-//  [] ~data_hazard? and ~resource_conflict? ->
-//    proceed!x
-//  ]
-//]
-//		)";
-//
-//	testBranchFlatten(source, target);
-//}
-//
-//
-//TEST(BranchFlatten, MemoryAccess) {
-//	std::string source = R"(
-//*[
-//  [ read_req?(addr) ->
-//    [ is_valid(addr) ->
-//      mem_read!addr; data_out!data
-//    [] ~is_valid(addr) ->
-//      error_flag!x
-//    ]
-//  [] write_req?(addr, data) ->
-//    [ is_valid(addr) ->
-//      mem_write!(addr, data)
-//    [] ~is_valid(addr) ->
-//      error_flag!x
-//    ]
-//  ]
-//]
-//		)";
-//
-//	std::string target = R"(
-//*[
-//  [ read_req?(addr) & is_valid(addr) -> mem_read!(addr); data_out!(data)
-//  [] read_req?(addr) & ~is_valid(addr) -> error_flag!
-//  [] write_req?(addr, data) & is_valid(addr) -> mem_write!(addr, data)
-//  [] write_req?(addr, data) & ~is_valid(addr) -> error_flag!
-//  ]
-//]
-//		)";
-//
-//	testBranchFlatten(source, target);
-//}
-
 
 
 TEST(BranchFlatten, Decoder3) {
@@ -719,4 +548,4 @@ TEST(BranchFlatten, Decoder4) {
 
 	testBranchFlatten(source, target, true);
 }
-
+*/

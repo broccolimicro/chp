@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "support.h"
+#include "helpers.h"
 #include "dot.h"
 
 #include <chp/synthesize.h>

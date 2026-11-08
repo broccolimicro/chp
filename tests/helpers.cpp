@@ -1,4 +1,4 @@
-#include "support.h"
+#include "helpers.h"
 
 #include <gtest/gtest.h>
 
@@ -18,8 +18,7 @@
 #include <parse_chp/composition.h>
 #include <parse_chp/factory.h>
 
-#include <interpret_flow/export_dot.h>
-#include <interpret_flow/export_cog.h>
+#include <interpret_chp/export_cog.h>
 #include <interpret_chp/export_dot.h>
 #include <interpret_chp/import_cog.h>
 #include <interpret_chp/import_chp.h>
@@ -118,7 +117,7 @@ chp::graph importCHPFromCogString(std::string name, std::string source, bool deb
 }
 
 void expectProperNesting(const chp::graph &g, bool debug) {
-	petri::graph<chp::place, controlflow::Tree<chp::transition>, chp::state> t;
+	petri::graph<chp::place, controlflow::Tree<chp::transition, chp::place>, chp::state> t;
 	EXPECT_TRUE(graph_to_tree(t, g));
 	if (debug) {
 		t.print();
@@ -144,6 +143,11 @@ void expectEq(const flow::Func &real, const flow::Func &expected) {
 	std::string expectedStr = parse_cog::export_func(expected).to_string("");
 
 	auto diff = lineDiff(realStr, expectedStr);
+	EXPECT_TRUE(isMatch(diff)) << diff;
+}
+
+void expectEq(std::string expected, std::string actual) {
+	auto diff = lineDiff(actual, expected);
 	EXPECT_TRUE(isMatch(diff)) << diff;
 }
 

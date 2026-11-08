@@ -14,4 +14,4 @@ chp::graph importCHPFromString(std::string name, std::string source, bool debug=
 chp::graph importCHPFromCogString(std::string name, std::string source, bool debug=false);
 void expectProperNesting(const chp::graph &g, bool debug=false);
 void expectEq(const flow::Func &real, const flow::Func &expected);
-
+void expectEq(std::string expected, std::string actual);
