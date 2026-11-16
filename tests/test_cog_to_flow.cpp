@@ -350,7 +350,7 @@ TEST(CogToFlow, Instance) {
 
 	expected.inst.push_back(flow::Instance("myProcess", {expr_L0, expr_L1, expr_M}));
 
-	testFuncSynthesisFromCog(expected);
+	testFuncSynthesisFromCog(expected, true);
 }
 
 /*

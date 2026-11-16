@@ -112,6 +112,8 @@ struct variable {
 
 	string name;
 	int region;
+	bool isInput;
+	bool isOutput;
 
 	vector<int> remote;
 };

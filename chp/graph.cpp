@@ -104,11 +104,15 @@ ostream &operator<<(ostream &os, const transition &t) {
 
 variable::variable() {
 	region = 0;
+	isInput = false;
+	isOutput = false;
 }
 
 variable::variable(string name, int region) {
 	this->name = name;
 	this->region = region;
+	this->isInput = false;
+	this->isOutput = false;
 }
 
 variable::~variable() {}

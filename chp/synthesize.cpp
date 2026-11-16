@@ -131,7 +131,6 @@ size_t synthesizeConditionFromTransitions(
 			continue;  // skip invalid transitions
 		}
 
-		if (context.debug) { cout << endl << "T" << transition_idx << endl; }
 		const chp::transition &transition = context.g.transitions[transition_idx];
 		flow::Condition &cond = context.func.conds[condition_idx];
 
@@ -150,12 +149,6 @@ size_t synthesizeConditionFromTransitions(
 				std::string chp_var_name = context.g.netAt(chp_var_idx);
 				setPurpose(context.func.nets[chp_var_idx], flow::Net::REG);
 				cond.mem(Operand::varOf(chp_var_idx), expr);
-
-				if (context.debug) {
-					cout << "* cond #" << condition_idx << " mem'd " << chp_var_name << endl
-						<< "in expr: " << expr.to_string() << endl;
-				}
-				//break; ??
 			}
 		}
 	}
@@ -201,11 +194,45 @@ std::set<size_t> get_branch_transitions(const graph &g, const petri::iterator &d
 	return branch_transition_idxs;
 }
 
+bool isInstance(arithmetic::Expression expr, flow::Instance &inst) {
+	Operand top = expr.top;
+	while (top.isExpr()) {
+		const arithmetic::Operation *op = expr.getExpr(expr.top.index);
+		if (op->func == arithmetic::Operation::CALL
+			or op->func == arithmetic::Operation::MEMBER_CALL) {
+			if (op->operands.empty()) {
+				internal("", "expected function type", __FILE__, __LINE__);
+			} else {
+				arithmetic::Value v = arithmetic::evaluateConstExpr(expr, op->operands[0]);
+				if (v.type != arithmetic::Value::LABEL) {
+					internal("", "expected function type to be a label '" + arithmetic::subExpr(expr, op->operands[0]).to_string(true) + "' = '" + v.to_string(true) + "'", __FILE__, __LINE__);
+				} else {
+					inst.type = v.sval;
+				}
+			}
+
+			for (size_t i = 1; i < op->operands.size(); i++) {
+				inst.ports.push_back(arithmetic::subExpr(expr, op->operands[i]));
+			}
+			return true;
+		}
+		if (op->func != arithmetic::Operation::IDENTITY
+			or op->operands.empty()) {
+			return false;
+		}
+
+		top = op->operands[0];
+	}
+	return false;
+}
+
+
 
 flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
-	flow::Func func;
+	flow::Func func(g.name);
+
 	SynthesisContext context(g, func, debug);
-	context.func.name = g.name;
+
 	for (const auto &var : g.vars) {
 		// DESIGN(edward.bingham) fill in purpose as we walk the graph
 
@@ -213,8 +240,6 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 		size_t width = (!var.name.empty() and var.name.back() == 'c') ? 1 : DATA_CHANNEL_WIDTH;  // Hack for short-term testing
 		context.func.pushNet(var.name, flow::Type(flow::Type::FIXED, width));
 	}
-
-	if (context.debug) { cout << endl << "?? FLAT ENOUGH FOR SYNTHESIS? " << std::boolalpha << g.isFlat() << endl << endl; }
 
 	// Confirm chp::graph has been normalized to flattened form & identify split-place dominator
 	petri::iterator dominator;
@@ -249,7 +274,6 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 			break;
 		}
 	}
-	if (context.debug) { cout << endl << "SYNTH DOM> " << dominator.to_string() << endl; }
 
 	// Capture split-less/branch-less groups too
 	if (dominator == -1) {
@@ -284,6 +308,42 @@ flow::Func synthesizeFuncFromCHP(const graph &g, bool debug) {
 			//		[](const petri::iterator &it) { return it.index; });
 		}
 	}
+
+	// look for process instantiations
+	for (petri::iterator i(transition::type, 0); i.index < (int)g.transitions.size(); i++) {
+		if (not g.is_valid(i)) continue;
+
+		vector<petri::iterator> n = g.next(i);
+		vector<petri::iterator> p = g.prev(i);
+
+		if (not n.empty() and not g.next(n).empty()) {
+			continue;
+		}
+
+		if (not p.empty() and not g.prev(p).empty()) {
+			continue;
+		}
+
+		arithmetic::Expression guard = g.transitions[i.index].guard;
+		if (not guard.isValid() and not guard.isUndef()) {
+			continue;
+		}
+
+		arithmetic::Choice action = g.transitions[i.index].action;
+		if (action.terms.size() != 1u) {
+			continue;
+		}
+
+		for (const arithmetic::Action &j : action.terms[0].actions) {
+			flow::Instance inst;
+			if (isInstance(j.rvalue, inst)) {
+				inst.name = "inst" + ::to_string(func.inst.size());
+				func.inst.push_back(inst);
+			}
+		}	
+	}
+
+
 
 	// Apply all mappings post-analysis
 	/*Expression x = Expression::varOf(0);
