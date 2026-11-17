@@ -1,6 +1,6 @@
 NAME          = chp
-DEPEND        = petri flow arithmetic interpret_arithmetic interpret_chp parse_dot parse_cog parse_expression parse_ucs parse_verilog parse common 
-TEST_DEPEND   = interpret_chp interpret_flow interpret_verilog interpret_arithmetic parse_cog parse_chp parse_dot parse_verilog petri flow verilog arithmetic parse_expression parse_ucs parse common
+DEPEND        = petri flow arithmetic interpret_arithmetic interpret_chp parse_dot parse_cog parse_expression parse_choy parse_verilog parse common 
+TEST_DEPEND   = interpret_chp interpret_flow interpret_verilog interpret_arithmetic parse_cog parse_chp parse_dot parse_verilog petri flow verilog arithmetic parse_expression parse_choy parse common
 
 COVERAGE ?= 0
 
